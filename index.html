@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Gym</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --bg:var(--tg-theme-bg-color,#0f1115);
+  --card:var(--tg-theme-secondary-bg-color,#1a1d24);
+  --text:var(--tg-theme-text-color,#f2f3f5);
+  --hint:var(--tg-theme-hint-color,#8b93a1);
+  --accent:var(--tg-theme-button-color,#3b82f6);
+  --accent-text:var(--tg-theme-button-text-color,#fff);
+  --danger:#ef4444;--ok:#22c55e;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding-bottom:84px}
+#app{padding:14px 14px 0;max-width:640px;margin:0 auto}
+h1{font-size:22px;margin:4px 0 12px}
+h2{font-size:17px;margin:0 0 8px}
+.card{background:var(--card);border-radius:14px;padding:12px;margin-bottom:10px}
+.hint{color:var(--hint);font-size:13px}
+.row{display:flex;gap:8px;align-items:center}
+.grow{flex:1;min-width:0}
+button{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--accent);color:var(--accent-text);cursor:pointer}
+button.ghost{background:transparent;color:var(--accent);padding:6px 8px}
+button.sec{background:var(--bg);color:var(--text)}
+button.danger{background:transparent;color:var(--danger);padding:6px 8px}
+button.full{width:100%}
+input,select,textarea{font:inherit;color:var(--text);background:var(--bg);border:1px solid rgba(128,128,128,.25);border-radius:10px;padding:9px 10px;width:100%;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+.set{display:grid;grid-template-columns:24px 1fr 1fr 34px;gap:8px;align-items:center;margin:6px 0}
+.set .n{color:var(--hint);text-align:center;font-size:14px}
+.set input{text-align:center}
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--card);padding:6px 6px calc(6px + env(safe-area-inset-bottom));border-top:1px solid rgba(128,128,128,.15)}
+.tabs button{flex:1;background:transparent;color:var(--hint);padding:8px 2px;font-size:12px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.tabs button span{font-size:20px;line-height:1}
+.tabs button.on{color:var(--accent)}
+.pills{display:flex;gap:6px;margin:8px 0}
+.pills button{flex:1;background:var(--bg);color:var(--hint);padding:8px 4px;font-size:14px}
+.pills button.on{background:var(--accent);color:var(--accent-text)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.stat{background:var(--card);border-radius:14px;padding:12px}
+.stat b{display:block;font-size:22px}
+canvas{width:100%;height:210px;display:block}
+.empty{text-align:center;color:var(--hint);padding:30px 10px}
+.badge{display:inline-block;background:var(--bg);border-radius:8px;padding:2px 8px;font-size:13px;color:var(--hint);margin:2px 4px 2px 0}
+.pr{color:var(--ok)}
+.sp{height:6px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<nav class="tabs" id="tabs"></nav>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); try{tg.setHeaderColor('bg_color')}catch(e){} }
+
+/* ---------- utils ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Math.random().toString(36).slice(2, 9);
+const ymd = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+const fmtDate = s => { const [y,m,d] = s.split('-'); return d + '.' + m + '.' + y.slice(2); };
+const num = v => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : 0; };
+const fmt = n => (Math.round(n * 10) / 10).toString().replace('.', ',');
+const e1rm = (w, r) => r > 0 ? w * (1 + r / 30) : 0;
+const haptic = t => { try { tg && tg.HapticFeedback.impactOccurred(t || 'light'); } catch(e){} };
+const confirmBox = (msg, cb) => {
+  if (tg && tg.showConfirm && tg.isVersionAtLeast && tg.isVersionAtLeast('6.2')) tg.showConfirm(msg, ok => ok && cb());
+  else if (confirm(msg)) cb();
+};
+
+/* ---------- storage: localStorage + Telegram CloudStorage ---------- */
+const KEY = 'gym_v1';
+let db = { ts: 0, programs: [], workouts: [], active: null };
+const cloud = tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
+
+function cloudGet(keys) {
+  return new Promise(res => cloud.getItems(keys, (err, v) => res(err ? null : v)));
+}
+async function loadAll() {
+  try { const l = JSON.parse(localStorage.getItem(KEY) || 'null'); if (l) db = Object.assign(db, l); } catch(e){}
+  if (cloud) {
+    try {
+      const m = await cloudGet(['n']);
+      const n = m && parseInt(m.n);
+      if (n) {
+        const keys = Array.from({length: n}, (_, i) => 'd' + i);
+        const parts = await cloudGet(keys);
+        const raw = keys.map(k => parts[k] || '').join('');
+        const c = JSON.parse(raw);
+        if (c && c.ts > db.ts) { db = Object.assign({ programs: [], workouts: [], active: null }, c); localStorage.setItem(KEY, JSON.stringify(db)); }
+      }
+    } catch(e){}
+  }
+}
+let saveTimer = null;
+function save() {
+  db.ts = Date.now();
+  try { localStorage.setItem(KEY, JSON.stringify(db)); } catch(e){}
+  if (!cloud) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const raw = JSON.stringify(db), size = 3500, n = Math.ceil(raw.length / size);
+    if (n > 200) return; // слишком большой объём для облака, останется локально
+    for (let i = 0; i < n; i++) cloud.setItem('d' + i, raw.slice(i * size, (i + 1) * size), () => {});
+    cloud.setItem('n', String(n), () => {});
+  }, 800);
+}
+
+/* ---------- state ---------- */
+const ui = { view: 'today', edit: null, open: {}, pex: '', metric: 'w' };
+const TABS = [['today','🏋️','Сегодня'],['programs','📋','Программы'],['history','📓','Дневник'],['progress','📈','Прогресс']];
+
+const sortedWorkouts = () => db.workouts.slice().sort((a, b) => (b.date + b.id).localeCompare(a.date + a.id));
+const exNames = () => {
+  const s = new Set();
+  db.programs.forEach(p => p.exercises.forEach(e => e.name && s.add(e.name.trim())));
+  db.workouts.forEach(w => w.entries.forEach(e => s.add(e.name)));
+  return [...s].sort((a, b) => a.localeCompare(b, 'ru'));
+};
+function lastSets(name, skipId) {
+  const key = name.trim().toLowerCase();
+  for (const w of sortedWorkouts()) {
+    if (w.id === skipId) continue;
+    const e = w.entries.find(x => x.name.trim().toLowerCase() === key);
+    if (e && e.sets.length) return e.sets;
+  }
+  return null;
+}
+const setsText = sets => sets.map(s => fmt(s.w) + '×' + s.r).join(', ');
+
+/* ---------- render ---------- */
+function render() {
+  $('#tabs').innerHTML = TABS.map(([k, ic, t]) => `<button class="${ui.view === k ? 'on' : ''}" data-act="tab" data-v="${k}"><span>${ic}</span>${t}</button>`).join('');
+  const v = { today: viewToday, programs: viewPrograms, history: viewHistory, progress: viewProgress }[ui.view];
+  $('#app').innerHTML = v();
+  if (ui.view === 'progress') drawCharts();
+}
+
+function viewToday() {
+  const a = db.active;
+  if (!a) {
+    const last = sortedWorkouts()[0];
+    return `<h1>Сегодня</h1>
+      ${last ? `<div class="hint" style="margin-bottom:10px">Последняя тренировка: ${esc(last.name)}, ${fmtDate(last.date)}</div>` : ''}
+      <div class="card"><h2>Начать тренировку</h2>
+        ${db.programs.map(p => `<button class="full sec" style="margin-bottom:8px;text-align:left" data-act="start" data-id="${p.id}">${esc(p.name)} <span class="hint">· ${p.exercises.length} упр.</span></button>`).join('')}
+        <button class="full" data-act="start" data-id="">+ Пустая тренировка</button>
+        ${db.programs.length ? '' : '<div class="hint" style="margin-top:8px">Совет: сначала составьте программу во вкладке «Программы».</div>'}
+      </div>`;
+  }
+  return `<h1>${esc(a.name)}</h1>
+    <div class="card"><label class="hint">Название</label><input data-f="aname" value="${esc(a.name)}"></div>
+    ${a.entries.map((e, ei) => {
+      const prev = lastSets(e.name, null);
+      return `<div class="card">
+        <div class="row"><h2 class="grow">${esc(e.name)}</h2><button class="danger" data-act="delex" data-ei="${ei}">Убрать</button></div>
+        ${prev ? `<div class="hint" style="margin-bottom:4px">Прошлый раз: ${esc(setsText(prev))}</div>` : ''}
+        ${e.target ? `<div class="hint">План: ${esc(e.target)}</div>` : ''}
+        <div class="set hint" style="margin-bottom:0"><span></span><span style="text-align:center">кг</span><span style="text-align:center">повт.</span><span></span></div>
+        ${e.sets.map((s, si) => `<div class="set"><span class="n">${si + 1}</span>
+          <input inputmode="decimal" data-f="w" data-ei="${ei}" data-si="${si}" value="${s.w || ''}" placeholder="0">
+          <input inputmode="numeric" data-f="r" data-ei="${ei}" data-si="${si}" value="${s.r || ''}" placeholder="0">
+          <button class="danger" data-act="delset" data-ei="${ei}" data-si="${si}">✕</button></div>`).join('')}
+        <button class="ghost" data-act="addset" data-ei="${ei}">+ подход</button>
+      </div>`;
+    }).join('')}
+    <div class="card"><div class="row">
+      <input class="grow" id="newex" list="exlist" placeholder="Добавить упражнение">
+      <datalist id="exlist">${exNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <button data-act="addex">+</button></div></div>
+    <div class="card"><label class="hint">Заметка</label><textarea rows="2" data-f="note" placeholder="Самочувствие, сон, что запомнить">${esc(a.note || '')}</textarea></div>
+    <div class="row"><button class="full" data-act="finish">Завершить ✓</button><button class="sec" data-act="cancel">Отмена</button></div>`;
+}
+
+function viewPrograms() {
+  const e = ui.edit;
+  if (e) {
+    return `<h1>${e.id ? 'Редактирование' : 'Новая программа'}</h1>
+      <div class="card"><label class="hint">Название</label><input data-pe="name" value="${esc(e.name)}" placeholder="Например: Грудь + трицепс"></div>
+      ${e.exercises.map((x, i) => `<div class="card">
+        <div class="row"><input class="grow" list="exlist" data-pe="ex" data-i="${i}" value="${esc(x.name)}" placeholder="Упражнение"><button class="danger" data-act="pdel" data-i="${i}">✕</button></div>
+        <div class="row" style="margin-top:8px">
+          <input inputmode="numeric" data-pe="sets" data-i="${i}" value="${x.sets}" placeholder="Подходов">
+          <span class="hint">×</span>
+          <input data-pe="reps" data-i="${i}" value="${esc(x.reps)}" placeholder="Повторов, напр. 8-12">
+        </div></div>`).join('')}
+      <datalist id="exlist">${exNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <button class="ghost" data-act="padd">+ упражнение</button>
+      <div class="sp"></div>
+      <div class="row"><button class="full" data-act="psave">Сохранить</button><button class="sec" data-act="pcancel">Отмена</button></div>`;
+  }
+  return `<h1>Программы</h1>
+    ${db.programs.length ? db.programs.map(p => `<div class="card">
+      <div class="row"><h2 class="grow">${esc(p.name)}</h2>
+        <button class="ghost" data-act="pedit" data-id="${p.id}">Изменить</button>
+        <button class="danger" data-act="pdrop" data-id="${p.id}">✕</button></div>
+      ${p.exercises.map(x => `<div class="hint">• ${esc(x.name)} — ${x.sets}×${esc(x.reps)}</div>`).join('')}
+      <div class="sp"></div><button class="full sec" data-act="start" data-id="${p.id}">Начать эту тренировку</button>
+    </div>`).join('') : '<div class="empty">Программ пока нет.<br>Составьте первую.</div>'}
+    <button class="full" data-act="pnew">+ Новая программа</button>`;
+}
+
+function viewHistory() {
+  const ws = sortedWorkouts();
+  return `<h1>Дневник</h1>
+    ${ws.length ? ws.map(w => {
+      const vol = w.entries.reduce((s, e) => s + e.sets.reduce((q, x) => q + x.w * x.r, 0), 0);
+      const open = ui.open[w.id];
+      return `<div class="card">
+        <div class="row" data-act="toggle" data-id="${w.id}" style="cursor:pointer">
+          <div class="grow"><b>${esc(w.name)}</b><div class="hint">${fmtDate(w.date)} · ${w.entries.length} упр. · объём ${fmt(vol)} кг${w.dur ? ' · ' + w.dur + ' мин' : ''}</div></div>
+          <span class="hint">${open ? '▲' : '▼'}</span></div>
+        ${open ? `<div class="sp"></div>${w.entries.map(e => `<div style="margin:6px 0"><b>${esc(e.name)}</b><div class="hint">${esc(setsText(e.sets))}</div></div>`).join('')}
+          ${w.note ? `<div class="hint">📝 ${esc(w.note)}</div>` : ''}
+          <button class="danger" data-act="wdel" data-id="${w.id}">Удалить запись</button>` : ''}
+      </div>`;
+    }).join('') : '<div class="empty">Пока нет записей.</div>'}
+    <details class="card"><summary class="hint">Резервная копия</summary>
+      <div class="sp"></div>
+      <button class="full sec" data-act="export">Копировать данные (JSON)</button>
+      <div class="sp"></div>
+      <textarea id="imp" rows="3" placeholder="Вставьте JSON для восстановления"></textarea>
+      <div class="sp"></div>
+      <button class="full sec" data-act="import">Восстановить</button>
+    </details>`;
+}
+
+/* ---------- progress ---------- */
+function exSeries(name) {
+  const key = name.trim().toLowerCase(), pts = [];
+  db.workouts.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(w => {
+    const e = w.entries.find(x => x.name.trim().toLowerCase() === key);
+    if (!e || !e.sets.length) return;
+    pts.push({
+      date: w.date,
+      w: Math.max(...e.sets.map(s => s.w)),
+      e: Math.max(...e.sets.map(s => e1rm(s.w, s.r))),
+      v: e.sets.reduce((q, s) => q + s.w * s.r, 0)
+    });
+  });
+  return pts;
+}
+function weekStart(d) { const x = new Date(d); const k = (x.getDay() + 6) % 7; x.setDate(x.getDate() - k); x.setHours(0,0,0,0); return x; }
+
+function viewProgress() {
+  const names = exNames().filter(n => exSeries(n).length);
+  if (!ui.pex || !names.includes(ui.pex)) ui.pex = names[0] || '';
+  const total = db.workouts.length;
+  const ws = weekStart(new Date());
+  const thisWeek = db.workouts.filter(w => new Date(w.date + 'T00:00:00') >= ws).length;
+  const d30 = new Date(); d30.setDate(d30.getDate() - 30);
+  const vol30 = db.workouts.filter(w => new Date(w.date + 'T00:00:00') >= d30)
+    .reduce((s, w) => s + w.entries.reduce((q, e) => q + e.sets.reduce((z, x) => z + x.w * x.r, 0), 0), 0);
+  if (!total) return '<h1>Прогресс</h1><div class="empty">Нужна хотя бы одна завершённая тренировка.</div>';
+  const pts = ui.pex ? exSeries(ui.pex) : [];
+  const best = pts.length ? Math.max(...pts.map(p => p.w)) : 0;
+  return `<h1>Прогресс</h1>
+    <div class="stats">
+      <div class="stat"><span class="hint">Всего тренировок</span><b>${total}</b></div>
+      <div class="stat"><span class="hint">На этой неделе</span><b>${thisWeek}</b></div>
+      <div class="stat"><span class="hint">Объём за 30 дней</span><b>${fmt(vol30 / 1000)} т</b></div>
+      <div class="stat"><span class="hint">Рекорд: ${esc(ui.pex || '—')}</span><b class="pr">${fmt(best)} кг</b></div>
+    </div>
+    <div class="card"><h2>Тренировки по неделям</h2><canvas id="c-weeks"></canvas></div>
+    <div class="card"><h2>По упражнению</h2>
+      <select data-f="pex">${names.map(n => `<option ${n === ui.pex ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <div class="pills">
+        <button class="${ui.metric === 'w' ? 'on' : ''}" data-act="metric" data-m="w">Макс. вес</button>
+        <button class="${ui.metric === 'e' ? 'on' : ''}" data-act="metric" data-m="e">Расч. 1ПМ</button>
+        <button class="${ui.metric === 'v' ? 'on' : ''}" data-act="metric" data-m="v">Объём</button>
+      </div>
+      <canvas id="c-ex"></canvas>
+      <div class="hint">${insight(pts)}</div>
+    </div>`;
+}
+function insight(pts) {
+  if (pts.length < 2) return 'Для анализа нужно минимум две тренировки с этим упражнением.';
+  const k = ui.metric, a = pts[0][k], b = pts[pts.length - 1][k];
+  const diff = b - a, pct = a ? diff / a * 100 : 0;
+  const unit = k === 'v' ? 'кг объёма' : 'кг';
+  return `С ${fmtDate(pts[0].date)} по ${fmtDate(pts[pts.length-1].date)}: ${diff >= 0 ? '+' : ''}${fmt(diff)} ${unit} (${diff >= 0 ? '+' : ''}${fmt(pct)}%) за ${pts.length} тренировок.`;
+}
+
+function cssv(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function setupCanvas(c) {
+  const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext('2d'); g.scale(dpr, dpr);
+  return { g, w, h };
+}
+function drawCharts() {
+  const accent = cssv('--accent') || '#3b82f6', hint = cssv('--hint') || '#888';
+  // недели
+  const c1 = $('#c-weeks');
+  if (c1) {
+    const { g, w, h } = setupCanvas(c1);
+    const base = weekStart(new Date()), weeks = [];
+    for (let i = 7; i >= 0; i--) { const d = new Date(base); d.setDate(d.getDate() - i * 7); weeks.push({ d, n: 0 }); }
+    db.workouts.forEach(wk => {
+      const ws = weekStart(new Date(wk.date + 'T00:00:00')).getTime();
+      const f = weeks.find(x => x.d.getTime() === ws); if (f) f.n++;
+    });
+    const max = Math.max(3, ...weeks.map(x => x.n)), bw = (w - 20) / weeks.length;
+    g.font = '12px sans-serif'; g.textAlign = 'center';
+    weeks.forEach((x, i) => {
+      const bh = (h - 40) * x.n / max, bx = 10 + i * bw + 4;
+      g.fillStyle = accent; g.globalAlpha = x.n ? 1 : .15;
+      g.fillRect(bx, h - 22 - Math.max(bh, 3), bw - 8, Math.max(bh, 3)); g.globalAlpha = 1;
+      g.fillStyle = hint;
+      if (x.n) g.fillText(x.n, bx + (bw - 8) / 2, h - 28 - bh);
+      g.fillText(String(x.d.getDate()).padStart(2,'0') + '.' + String(x.d.getMonth()+1).padStart(2,'0'), bx + (bw - 8) / 2, h - 6);
+    });
+  }
+  // упражнение
+  const c2 = $('#c-ex');
+  if (c2) {
+    const { g, w, h } = setupCanvas(c2), pts = exSeries(ui.pex), k = ui.metric;
+    if (!pts.length) return;
+    const vals = pts.map(p => p[k]);
+    let mn = Math.min(...vals), mx = Math.max(...vals);
+    if (mn === mx) { mn -= 1; mx += 1; }
+    const pad = (mx - mn) * 0.15; mn -= pad; mx += pad;
+    const L = 38, R = 14, T = 14, B = 26;
+    const X = i => pts.length === 1 ? (L + w - R) / 2 : L + (w - L - R) * i / (pts.length - 1);
+    const Y = v => T + (h - T - B) * (1 - (v - mn) / (mx - mn));
+    g.font = '11px sans-serif'; g.fillStyle = hint; g.strokeStyle = 'rgba(128,128,128,.2)'; g.lineWidth = 1; g.textAlign = 'right';
+    for (let i = 0; i < 4; i++) {
+      const v = mn + (mx - mn) * i / 3, y = Y(v);
+      g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke(); g.fillText(Math.round(v), L - 5, y + 4);
+    }
+    g.strokeStyle = accent; g.lineWidth = 2.5; g.lineJoin = 'round'; g.beginPath();
+    pts.forEach((p, i) => i ? g.lineTo(X(i), Y(p[k])) : g.moveTo(X(i), Y(p[k]))); g.stroke();
+    g.fillStyle = accent; pts.forEach((p, i) => { g.beginPath(); g.arc(X(i), Y(p[k]), 4, 0, 7); g.fill(); });
+    g.fillStyle = hint; g.textAlign = 'left'; g.fillText(fmtDate(pts[0].date), L, h - 7);
+    g.textAlign = 'right'; g.fillText(fmtDate(pts[pts.length - 1].date), w - R, h - 7);
+  }
+}
+
+/* ---------- actions ---------- */
+const A = {
+  tab(el) { ui.view = el.dataset.v; ui.edit = null; render(); window.scrollTo(0, 0); },
+  start(el) {
+    const p = db.programs.find(x => x.id === el.dataset.id);
+    db.active = {
+      id: uid(), start: Date.now(), date: ymd(new Date()), name: p ? p.name : 'Тренировка', note: '',
+      entries: p ? p.exercises.filter(x => x.name.trim()).map(x => ({
+        name: x.name.trim(), target: x.sets + '×' + x.reps,
+        sets: Array.from({ length: Math.max(1, num(x.sets)) }, () => ({ w: 0, r: 0 }))
+      })) : []
+    };
+    // подставить прошлые веса
+    db.active.entries.forEach(e => { const pr = lastSets(e.name, null); if (pr) e.sets.forEach((s, i) => { const q = pr[Math.min(i, pr.length - 1)]; s.w = q.w; }); });
+    ui.view = 'today'; save(); render(); haptic();
+  },
+  addex() {
+    const v = $('#newex').value.trim(); if (!v) return;
+    const pr = lastSets(v, null);
+    db.active.entries.push({ name: v, target: '', sets: [{ w: pr ? pr[0].w : 0, r: 0 }] });
+    save(); render();
+  },
+  delex(el) { confirmBox('Убрать упражнение?', () => { db.active.entries.splice(+el.dataset.ei, 1); save(); render(); }); },
+  addset(el) {
+    const e = db.active.entries[+el.dataset.ei], l = e.sets[e.sets.length - 1];
+    e.sets.push({ w: l ? l.w : 0, r: l ? l.r : 0 }); save(); render(); haptic();
+  },
+  delset(el) { db.active.entries[+el.dataset.ei].sets.splice(+el.dataset.si, 1); save(); render(); },
+  finish() {
+    const a = db.active;
+    const entries = a.entries.map(e => ({ name: e.name, sets: e.sets.filter(s => s.r > 0) })).filter(e => e.sets.length);
+    if (!entries.length) { alert('Заполните хотя бы один подход (повторения больше нуля).'); return; }
+    db.workouts.push({ id: a.id, date: a.date, name: a.name || 'Тренировка', note: a.note, entries, dur: Math.max(1, Math.round((Date.now() - a.start) / 60000)) });
+    db.active = null; ui.view = 'history'; ui.open[a.id] = true; save(); render();
+    try { tg && tg.HapticFeedback.notificationOccurred('success'); } catch(e){}
+  },
+  cancel() { confirmBox('Отменить тренировку без сохранения?', () => { db.active = null; save(); render(); }); },
+  toggle(el) { ui.open[el.dataset.id] = !ui.open[el.dataset.id]; render(); },
+  wdel(el) { confirmBox('Удалить запись?', () => { db.workouts = db.workouts.filter(w => w.id !== el.dataset.id); save(); render(); }); },
+  pnew() { ui.edit = { id: '', name: '', exercises: [{ name: '', sets: 3, reps: '8-12' }] }; render(); },
+  pedit(el) { const p = db.programs.find(x => x.id === el.dataset.id); ui.edit = JSON.parse(JSON.stringify(p)); render(); },
+  pdrop(el) { confirmBox('Удалить программу?', () => { db.programs = db.programs.filter(p => p.id !== el.dataset.id); save(); render(); }); },
+  padd() { ui.edit.exercises.push({ name: '', sets: 3, reps: '8-12' }); render(); },
+  pdel(el) { ui.edit.exercises.splice(+el.dataset.i, 1); render(); },
+  pcancel() { ui.edit = null; render(); },
+  psave() {
+    const e = ui.edit; e.name = e.name.trim();
+    e.exercises = e.exercises.filter(x => x.name.trim());
+    if (!e.name || !e.exercises.length) { alert('Нужно название и хотя бы одно упражнение.'); return; }
+    if (e.id) db.programs = db.programs.map(p => p.id === e.id ? e : p); else { e.id = uid(); db.programs.push(e); }
+    ui.edit = null; save(); render();
+  },
+  metric(el) { ui.metric = el.dataset.m; render(); },
+  export() {
+    const t = JSON.stringify(db);
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => alert('Скопировано в буфер обмена'), () => { $('#imp').value = t; alert('Данные помещены в поле ниже, скопируйте вручную'); });
+  },
+  import() {
+    try {
+      const d = JSON.parse($('#imp').value);
+      if (!Array.isArray(d.workouts) || !Array.isArray(d.programs)) throw 0;
+      confirmBox('Заменить текущие данные восстановленными?', () => { db = Object.assign({ active: null }, d); save(); render(); });
+    } catch(e) { alert('Не удалось прочитать JSON'); }
+  }
+};
+
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-act]');
+  if (el && A[el.dataset.act]) A[el.dataset.act](el);
+});
+document.addEventListener('input', ev => {
+  const t = ev.target, d = t.dataset;
+  if (d.f === 'w' || d.f === 'r') { db.active.entries[+d.ei].sets[+d.si][d.f] = num(t.value); save(); }
+  else if (d.f === 'aname') { db.active.name = t.value; save(); }
+  else if (d.f === 'note') { db.active.note = t.value; save(); }
+  else if (d.pe && ui.edit) {
+    if (d.pe === 'name') ui.edit.name = t.value;
+    else { const x = ui.edit.exercises[+d.i]; if (d.pe === 'ex') x.name = t.value; else if (d.pe === 'sets') x.sets = t.value; else x.reps = t.value; }
+  }
+});
+document.addEventListener('change', ev => {
+  if (ev.target.dataset.f === 'pex') { ui.pex = ev.target.value; render(); }
+});
+window.addEventListener('resize', () => { if (ui.view === 'progress') drawCharts(); });
+
+loadAll().then(() => { if (db.active) ui.view = 'today'; render(); });
+render();
+</script>
+</body>
+</html>
