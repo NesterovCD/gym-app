@@ -100,11 +100,30 @@ label.row{cursor:pointer;margin:6px 0}
 .meter{height:16px;border:2px solid var(--line);border-radius:9px;background:var(--bg);margin:10px 0;overflow:hidden}
 .meter i{display:block;height:100%;background:repeating-linear-gradient(90deg,var(--raspberry) 0 9px,var(--periwinkle) 9px 18px);transition:width .3s}
 .brand .tg+.tg{margin-left:0}
+.card.ss{border-left:8px solid var(--raspberry)}
+.set.drop{background:var(--soft);border-radius:10px;padding:2px 4px}
+.set .n[data-act]{cursor:pointer}
+.fg{display:block;width:100%;height:auto;fill:none;stroke:var(--text);stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+.fg .hd{fill:var(--card)}.fg .hl{stroke:var(--raspberry)}.fg .pr{stroke:var(--periwinkle);stroke-width:4}.fg .fl{stroke:var(--text);stroke-width:2;opacity:.35}.fg .ar{stroke:var(--periwinkle);stroke-width:3}
+.thumb{width:72px;flex:none;background:var(--bg);border:2px solid var(--line);border-radius:10px;padding:2px}
+#focus{position:fixed;inset:0;z-index:60;background:var(--bg);display:none;flex-direction:column;padding:14px 16px calc(16px + env(safe-area-inset-bottom));overflow:auto}
+#focus.on{display:flex}
+.fbar{height:12px;border:2px solid var(--line);border-radius:7px;overflow:hidden;background:var(--card)}
+.fbar i{display:block;height:100%;background:repeating-linear-gradient(90deg,var(--raspberry) 0 9px,var(--periwinkle) 9px 18px);transition:width .3s}
+.fk{font-family:var(--f-display);font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+.fnum{font-family:var(--f-display);font-weight:900;font-size:84px;line-height:1.1;text-align:center;border:0;background:transparent;box-shadow:none;width:100%;padding:0;margin:6px 0;color:var(--text)}
+.fnum:focus{box-shadow:none;border:0}
+.fstep{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:8px 0}
+.fstep button{padding:14px 0;font-size:18px}
+.fgo{padding:18px;font-size:20px;font-family:var(--f-display);text-transform:uppercase;letter-spacing:.04em;margin-top:8px}
+@keyframes pop{0%{transform:scale(.7);opacity:0}60%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+.pop{animation:pop .3s ease-out}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="sheet"></div>
+<div id="focus"></div>
 <nav class="tabs" id="tabs"></nav>
 
 <script>
@@ -287,11 +306,20 @@ function normSettings(s) {
     supps: Array.isArray(s.supps) ? s.supps.map(p => ({ id: String(p.id || uid()), name: String(p.name || ''), time: p.time || '09:00', on: p.on !== false })) : []
   };
 }
+const defBlocks = () => ({ opener: { on: true, pid: '', made: false }, cool: { on: true } });
 const defGen = () => ({ days: 4, min: 60, equip: 'full', level: 'mid', prio: [], limits: ['knee'] });
 const defProfile = () => ({ ts: 0, sex: 'm', age: '', height: '', activity: 1.55, goal: 'maint', adj: 0, adjDate: '' });
-let db = { ts: 0, programs: [], workouts: [], active: null, body: [], custom: [], water: [], supps: [], settings: defSettings(), profile: defProfile(), gen: defGen() };
+let db = { ts: 0, programs: [], workouts: [], active: null, body: [], custom: [], water: [], supps: [], settings: defSettings(), profile: defProfile(), gen: defGen(), blocks: defBlocks() };
 const cloud = tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
-const fixDb = () => { db.programs = db.programs || []; db.workouts = db.workouts || []; db.body = db.body || []; db.custom = db.custom || []; db.water = db.water || []; db.supps = db.supps || []; db.settings = normSettings(db.settings); db.profile = Object.assign(defProfile(), db.profile || {}); db.gen = Object.assign(defGen(), db.gen || {}); if (!Array.isArray(db.gen.prio)) db.gen.prio = []; if (!Array.isArray(db.gen.limits)) db.gen.limits = []; };
+const fixDb = () => { db.programs = db.programs || []; db.workouts = db.workouts || []; db.body = db.body || []; db.custom = db.custom || []; db.water = db.water || []; db.supps = db.supps || []; db.settings = normSettings(db.settings); db.profile = Object.assign(defProfile(), db.profile || {}); db.gen = Object.assign(defGen(), db.gen || {}); if (!Array.isArray(db.gen.prio)) db.gen.prio = []; if (!Array.isArray(db.gen.limits)) db.gen.limits = [];
+  const b = db.blocks || {}; db.blocks = { opener: Object.assign({ on: true, pid: '', made: false }, b.opener || {}), cool: Object.assign({ on: true }, b.cool || {}) }; ensureOpener(); };
+function ensureOpener(force) {
+  const b = db.blocks.opener;
+  if (!force && b.made) return;
+  if (db.programs.some(p => p.id === b.pid)) { b.made = true; return; }
+  const p = { id: uid(), grp: 'Блоки', name: 'Старт: пресс + гиперэкстензия', opener: true, exercises: [{ name: 'Скручивания', sets: 3, reps: '15-20', ss: 'o' }, { name: 'Гиперэкстензия', sets: 3, reps: '12-15', ss: 'o' }] };
+  db.programs.push(p); b.pid = p.id; b.made = true; b.on = true;
+}
 
 function cloudGet(keys) {
   return new Promise(res => cloud.getItems(keys, (err, v) => res(err ? null : v)));
@@ -353,12 +381,236 @@ async function syncNow() {
       if (j.settings && (j.settings.ts || 0) > (db.settings.ts || 0)) db.settings = normSettings(j.settings);
       save();
       const a = document.activeElement;
-      if (!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) && (!ui.sheet || ui.sheet.t !== 'settings')) render();
+      if (!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) && !ui.sheet && !ui.focus) render();
     }
   } catch (e) {}
   syncBusy = false;
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - syncAt > 20000) syncNow(); });
+
+/* ---------- суперсеты, дропсеты, подсказки веса ---------- */
+function ssPos(arr) {
+  const out = arr.map(() => null); let i = 0;
+  while (i < arr.length) {
+    let j = i; while (arr[i].ss && j + 1 < arr.length && arr[j + 1].ss === arr[i].ss) j++;
+    if (j > i) for (let k = i; k <= j; k++) out[k] = { pos: k - i + 1, len: j - i + 1 };
+    i = j + 1;
+  }
+  return out;
+}
+function toggleSS(a, i) {
+  if (i <= 0) return; const p = a[i - 1], c = a[i];
+  if (p.ss && p.ss === c.ss) c.ss = ''; else { const id = p.ss || 's' + uid(); p.ss = id; c.ss = id; }
+}
+const dropW = w => w > 0 ? (w >= 20 ? Math.round(w * 0.8 / 2.5) * 2.5 : Math.round(w * 0.8)) : 0;
+function repRange(t) {
+  t = String(t || ''); const time = /сек/i.test(t), m = t.match(/(\d+)\s*[-–]\s*(\d+)/);
+  if (m) return { lo: +m[1], hi: +m[2], time };
+  const s = t.match(/×\s*(\d+)/); if (s) return { lo: +s[1], hi: +s[1], time };
+  return { lo: 8, hi: 12, time };
+}
+function suggestFor(e) {
+  const rg = repRange(e.target), ex = getEx(e.name), prev = lastSets(e.name, null);
+  const time = rg.time || !!(ex && ex.p === 'corestab'), work = prev ? prev.filter(s => !s.d && s.r > 0) : [];
+  const out = { lo: rg.lo, hi: rg.hi, time, w: 0, reps: Math.round((rg.lo + rg.hi) / 2), note: '' };
+  if (!work.length) { out.note = time ? 'Новое упражнение: засеките комфортное время.' : `Новое упражнение: подберите вес на ${rg.lo}–${rg.hi} повторений.`; return out; }
+  const topW = Math.max(...work.map(s => s.w)), minR = Math.min(...work.filter(s => s.w === topW).map(s => s.r));
+  const inc = !ex ? 2.5 : ex.e === 'dumbbell' ? 2 : (ex.e === 'barbell' && (ex.g === 'quads' || ex.g === 'hams')) ? 5 : 2.5;
+  out.w = topW;
+  if (time) { out.reps = minR + 5; out.note = `Прошлый раз ${minR} сек. Попробуйте ${out.reps}.`; }
+  else if (topW === 0) { out.reps = minR + 1; out.note = `Свой вес, прошлый раз ${minR}. Цель ${out.reps}.`; }
+  else if (minR >= rg.hi) { out.w = topW + inc; out.reps = rg.lo; out.note = `Прогресс: все подходы на ${minR}. Берём ${fmt(out.w)} кг.`; }
+  else { out.reps = Math.min(rg.hi, Math.max(rg.lo, minR + 1)); out.note = minR >= rg.lo ? `Вес прежний, цель ${out.reps} повторений.` : `Вес прежний, добейте до ${rg.lo} повторений.`; }
+  return out;
+}
+function mkEntry(name, target, nSets, drop, ss) {
+  const e = { name, target: target || '', ss: ss || '', sets: Array.from({ length: Math.max(1, nSets) }, () => ({ w: 0, r: 0 })) };
+  if (drop) e.sets.push({ w: 0, r: 0, d: 1 });
+  e.sug = suggestFor(e); applySug(e); return e;
+}
+function applySug(e) {
+  const sg = e.sug; e.sets.forEach((s, i) => { if (!s.r) s.w = s.d ? dropW(e.sets[i - 1] ? e.sets[i - 1].w : sg.w) : sg.w; });
+}
+const mkEntries = exs => exs.filter(x => x.name.trim()).map(x => mkEntry(x.name.trim(), x.sets + '×' + x.reps + (x.drop ? ' + дроп' : ''), num(x.sets), x.drop, x.ss));
+
+/* ---------- заминка и растяжка ---------- */
+const pl = (pts, c = '') => `<polyline class="${c}" points="${pts.map(p => p.join(',')).join(' ')}"/>`;
+const hd = (x, y, c = '') => `<circle class="hd ${c}" cx="${x}" cy="${y}" r="8"/>`;
+const arrow = (x1, y1, x2, y2) => { const a = Math.atan2(y2 - y1, x2 - x1), h = 6, l = a + 2.6, r = a - 2.6; return `<g class="ar"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/><polyline points="${x2 + h * Math.cos(l)},${y2 + h * Math.sin(l)} ${x2},${y2} ${x2 + h * Math.cos(r)},${y2 + h * Math.sin(r)}"/></g>`; };
+const FLOOR = '<line class="fl" x1="6" y1="100" x2="154" y2="100"/>';
+const FIG = {
+  chest_door: () => FLOOR + '<line class="pr" x1="122" y1="4" x2="122" y2="100"/>' + pl([[76, 62], [66, 82], [60, 100]]) + pl([[76, 62], [90, 80], [96, 100]]) + pl([[82, 26], [76, 62]]) + hd(84, 16) + pl([[82, 30], [80, 46], [80, 58]]) + pl([[82, 30], [106, 30], [116, 14]], 'hl') + arrow(52, 40, 66, 40),
+  lat_reach: () => FLOOR + pl([[84, 62], [78, 100]]) + pl([[84, 62], [92, 100]]) + pl([[84, 62], [80, 28]]) + hd(78, 17) + pl([[80, 30], [70, 46], [78, 58]]) + pl([[80, 31], [98, 18], [86, 2]], 'hl') + arrow(104, 40, 114, 48),
+  cross_arm: () => FLOOR + pl([[80, 62], [74, 100]]) + pl([[80, 62], [86, 100]]) + pl([[80, 28], [80, 62]]) + hd(80, 17) + pl([[72, 31], [110, 38]], 'hl') + pl([[88, 31], [96, 44], [104, 38]]) + arrow(124, 42, 112, 42),
+  tri_over: () => FLOOR + pl([[80, 62], [74, 100]]) + pl([[80, 62], [86, 100]]) + pl([[80, 28], [80, 62]]) + hd(80, 17) + pl([[88, 30], [96, 8], [80, 22]], 'hl') + pl([[72, 30], [82, 12], [94, 8]]) + arrow(110, 14, 100, 14),
+  clasp_back: () => FLOOR + pl([[78, 62], [74, 100]]) + pl([[78, 62], [86, 100]]) + pl([[84, 28], [78, 62]]) + hd(88, 17) + pl([[83, 32], [62, 52], [52, 62]], 'hl') + arrow(40, 70, 40, 50),
+  neck: () => FLOOR + pl([[80, 62], [74, 100]]) + pl([[80, 62], [86, 100]]) + pl([[80, 32], [80, 62]]) + pl([[62, 34], [98, 34]]) + pl([[80, 32], [84, 26]], 'hl') + hd(90, 18) + pl([[98, 34], [112, 20], [96, 10]]) + pl([[62, 34], [58, 54], [60, 70]]),
+  hang: () => '<line class="pr" x1="30" y1="8" x2="130" y2="8"/>' + pl([[72, 8], [74, 34]], 'hl') + pl([[88, 8], [86, 34]], 'hl') + hd(80, 26) + pl([[80, 36], [80, 72]]) + pl([[80, 72], [76, 104]]) + pl([[80, 72], [84, 104]]),
+  quad_stand: () => FLOOR + pl([[80, 62], [80, 100]]) + pl([[80, 62], [78, 84], [60, 74]], 'hl') + pl([[82, 28], [80, 62]]) + hd(84, 17) + pl([[82, 32], [70, 52], [60, 74]]) + arrow(40, 70, 40, 50),
+  ham_supine: () => FLOOR + hd(22, 88) + pl([[32, 94], [72, 94]]) + pl([[72, 94], [140, 96]]) + pl([[72, 94], [92, 30]], 'hl') + pl([[38, 94], [64, 74], [86, 52]]) + arrow(110, 40, 100, 52),
+  glute_fig4: () => FLOOR + hd(22, 88) + pl([[32, 94], [72, 94]]) + pl([[72, 94], [98, 54], [120, 94]]) + pl([[72, 94], [116, 74], [102, 58]], 'hl') + pl([[38, 94], [66, 68], [100, 72]]) + arrow(132, 52, 120, 62),
+  knee_chest: () => FLOOR + hd(22, 88) + pl([[32, 94], [72, 94]]) + pl([[72, 94], [142, 96]]) + pl([[72, 94], [70, 66], [92, 76]], 'hl') + pl([[38, 94], [54, 78], [72, 68]]) + arrow(92, 50, 80, 60),
+  calf_wall: () => FLOOR + '<line class="pr" x1="128" y1="4" x2="128" y2="100"/>' + pl([[86, 62], [64, 100]], 'hl') + pl([[86, 62], [102, 82], [106, 100]]) + pl([[104, 34], [88, 62]]) + hd(108, 24) + pl([[104, 36], [118, 36], [126, 32]]) + arrow(52, 56, 66, 50),
+  twist: () => '<line class="fl" x1="6" y1="100" x2="154" y2="100"/>' + hd(26, 56) + pl([[36, 56], [78, 56]]) + pl([[48, 22], [48, 90]]) + pl([[78, 56], [104, 84], [84, 96]], 'hl') + arrow(124, 74, 116, 90),
+  cobra: () => FLOOR + pl([[104, 94], [150, 96]]) + pl([[104, 94], [76, 66]], 'hl') + hd(68, 54) + pl([[78, 70], [76, 94], [52, 96]]) + arrow(126, 66, 126, 80)
+};
+const svgFig = k => `<svg class="fg" viewBox="0 0 160 110" role="img" aria-hidden="true">${(FIG[k] || (() => ''))()}</svg>`;
+const STR = [
+  { id: 'chest_door', pos: 0, name: 'Грудь у дверного проёма', g: ['chest'], hold: 30, sides: true, knee: true, steps: ['Встаньте боком к дверному проёму. Согните руку под 90° и упритесь предплечьем в косяк на уровне плеча.', 'Сделайте небольшой шаг вперёд и слегка поверните корпус от руки, пока не почувствуете растяжение в груди.', 'Плечо опущено, дыхание ровное. Затем повторите с другой стороны.'], tip: 'Растяжение комфортное, плечо остаётся без боли.' },
+  { id: 'lat_reach', pos: 0, name: 'Широчайшие: наклон в сторону', g: ['back'], hold: 30, sides: true, knee: true, steps: ['Встаньте прямо, ноги на ширине плеч. Одну руку поднимите вверх.', 'Наклонитесь в сторону от поднятой руки, корпус остаётся в одной плоскости.', 'Тянитесь локтем вверх и в сторону, пока не почувствуете растяжение вдоль бока. Смените сторону.'], tip: 'Живот слегка втянут, поясница ровная.' },
+  { id: 'cross_arm', pos: 0, name: 'Плечо: рука поперёк груди', g: ['shoulders'], hold: 30, sides: true, knee: true, steps: ['Выпрямите руку и проведите её поперёк груди.', 'Другой рукой прижмите её к груди выше локтя.', 'Плечо опущено, дыхание ровное. Смените руку.'], tip: 'Давите на руку выше локтя, кисть остаётся расслабленной.' },
+  { id: 'tri_over', pos: 0, name: 'Трицепс: рука за головой', g: ['triceps'], hold: 30, sides: true, knee: true, steps: ['Поднимите руку вверх, согните локоть и опустите кисть за голову.', 'Другой рукой мягко надавите на локоть вниз и назад.', 'Корпус прямой, шея расслаблена. Смените руку.'], tip: 'Локоть смотрит вверх, давление мягкое.' },
+  { id: 'clasp_back', pos: 0, name: 'Грудь и бицепс: руки за спиной', g: ['chest', 'biceps'], hold: 30, sides: false, knee: true, steps: ['Встаньте прямо и соедините кисти в замок за спиной.', 'Выпрямите руки и медленно поднимайте их назад и вверх.', 'Грудь раскрыта, лопатки сведены, подбородок параллельно полу.'], tip: 'Если замок не получается, возьмите полотенце.' },
+  { id: 'neck', pos: 0, name: 'Шея и трапеции: наклон головы', g: ['shoulders', 'back'], hold: 25, sides: true, knee: true, steps: ['Встаньте или сядьте прямо, плечи опустите.', 'Наклоните голову к плечу, ухом тянитесь вниз.', 'Рукой сверху добавьте лёгкое давление. Смените сторону.'], tip: 'Давление очень лёгкое, движения плавные.' },
+  { id: 'hang', pos: 0, name: 'Вис на турнике', g: ['back'], hold: 25, sides: false, knee: true, steps: ['Возьмитесь за перекладину хватом чуть шире плеч.', 'Повисните на прямых руках, плечи расслаблены.', 'Дышите ровно и дайте позвоночнику вытянуться. Ноги можно слегка согнуть.'], tip: 'Если хват слабый, сократите время или используйте лямки.' },
+  { id: 'quad_stand', pos: 0, name: 'Квадрицепс стоя', g: ['quads'], hold: 30, sides: true, knee: false, steps: ['Встаньте прямо, при необходимости опритесь рукой о стену.', 'Согните ногу и возьмитесь рукой за стопу, пятка идёт к ягодице.', 'Колени рядом, таз слегка подкручен вперёд. Смените ногу.'], tip: 'Колено смотрит вниз и не уходит в сторону.' },
+  { id: 'ham_supine', pos: 1, name: 'Задняя поверхность бедра лёжа', g: ['hams'], hold: 30, sides: true, knee: true, steps: ['Лягте на спину, одну ногу вытяните по полу.', 'Поднимите другую ногу вверх и обхватите бедро или голень руками (можно взять полотенце).', 'Тяните ногу к себе до растяжения сзади бедра. Колено при необходимости слегка согнуто. Смените ногу.'], tip: 'Таз прижат к полу, носок тянется на себя.' },
+  { id: 'glute_fig4', pos: 1, name: 'Ягодичные: «четвёрка» лёжа', g: ['hams'], hold: 30, sides: true, knee: true, steps: ['Лягте на спину, согните ноги, стопы стоят на полу.', 'Положите лодыжку одной ноги на колено другой.', 'Обхватите бедро опорной ноги и потяните к груди. Смените ногу.'], tip: 'Колено верхней ноги раскрывается в сторону плавно.' },
+  { id: 'knee_chest', pos: 1, name: 'Колено к груди лёжа', g: ['hams', 'back'], hold: 30, sides: true, knee: false, steps: ['Лягте на спину, одну ногу вытяните по полу.', 'Обхватите колено другой ноги и прижмите к груди.', 'Поясница прижата к полу, дыхание ровное. Смените ногу.'], tip: 'Тяните плавно, без рывков.' },
+  { id: 'calf_wall', pos: 0, name: 'Икры у стены', g: ['calves'], hold: 30, sides: true, knee: true, steps: ['Встаньте лицом к стене и упритесь руками.', 'Одну ногу отведите назад, пятка прижата к полу, нога прямая.', 'Согните переднюю ногу и подайте таз к стене. Смените ногу.'], tip: 'Носки смотрят прямо, пятка остаётся на полу.' },
+  { id: 'twist', pos: 1, name: 'Скрутка лёжа', g: ['core', 'back'], hold: 30, sides: true, knee: true, steps: ['Лягте на спину, руки в стороны, ноги согнуты.', 'Медленно опустите колени в одну сторону, плечи остаются на полу.', 'Дышите ровно, взгляд в противоположную сторону. Смените сторону.'], tip: 'Амплитуда комфортная, поясница без боли.' },
+  { id: 'cobra', pos: 2, name: 'Кобра на предплечьях', g: ['core'], hold: 30, sides: false, knee: true, steps: ['Лягте на живот, предплечья стоят на полу под плечами.', 'Приподнимите грудь, таз остаётся на полу.', 'Плечи опущены от ушей, дыхание ровное.'], tip: 'Если поясница сжимается, опуститесь ниже.' }
+];
+const STRID = Object.fromEntries(STR.map(x => [x.id, x]));
+const COOL_MAP = { chest: ['chest_door', 'clasp_back'], back: ['lat_reach', 'hang'], shoulders: ['cross_arm', 'neck'], biceps: ['clasp_back'], triceps: ['tri_over'], quads: ['quad_stand', 'ham_supine'], hams: ['ham_supine', 'glute_fig4', 'knee_chest'], calves: ['calf_wall'], core: ['cobra'] };
+function coolFor(groups) {
+  const lim = db.gen.limits.includes('knee'), ids = [], add = id => { const s = STRID[id]; if (s && !ids.includes(id) && !(lim && !s.knee)) ids.push(id); };
+  groups.forEach(g => (COOL_MAP[g] || []).slice(0, 2).forEach(add)); add('twist');
+  ['neck', 'lat_reach', 'ham_supine', 'cross_arm', 'cobra'].forEach(id => { if (ids.length < 5) add(id); });
+  return ids.slice(0, 7).sort((a, b) => STRID[a].pos - STRID[b].pos);
+}
+const coolMin = ids => Math.max(1, Math.round(ids.reduce((s, id) => s + STRID[id].hold * (STRID[id].sides ? 2 : 1) + 8, 0) / 60));
+const GENERAL_GROUPS = ['chest', 'back', 'shoulders', 'triceps', 'hams', 'calves', 'core'];
+const activeGroups = () => [...new Set(db.active.entries.map(e => { const x = getEx(e.name); return x ? x.g : null; }).filter(Boolean))];
+function coolCard(ids, act, sub) {
+  return `<div class="card"><div class="row"><h2 class="grow" style="margin:0">🧘 Заминка и растяжка</h2><span class="badge">~${coolMin(ids)} мин</span></div>
+    <div class="hint" style="margin:4px 0 8px">${esc(sub)}</div>
+    <div class="row" style="gap:6px;margin-bottom:8px">${ids.slice(0, 4).map(id => `<div class="thumb">${svgFig(id)}</div>`).join('')}</div>
+    <button class="full sec" data-act="coolopen" data-ctx="${act}">Открыть заминку</button></div>`;
+}
+function coolSheet() {
+  const c = ui.cool, done = Object.keys(c.done).length;
+  return ['Заминка и растяжка', `<div class="hint" style="margin-bottom:8px">Около ${coolMin(c.ids)} мин. Выполнено ${done} из ${c.ids.length}. Нажмите на упражнение, чтобы увидеть рисунок и таймер.</div>
+    ${c.ids.map((id, i) => { const s = STRID[id]; return `<div class="exrow" data-act="stopen" data-i="${i}"><div class="thumb" style="width:84px">${svgFig(id)}</div><div class="grow"><b>${esc(s.name)}</b><div class="hint">${s.hold} сек${s.sides ? ' на каждую сторону' : ''}</div></div><span style="font-size:22px">${c.done[id] ? '✅' : '⬜'}</span></div>`; }).join('')}`];
+}
+function stretchSheet(s) {
+  const c = ui.cool, id = c.ids[s.i], x = STRID[id];
+  return [x.name, `<div class="card" style="padding:6px">${svgFig(id)}</div>
+    <div class="hint" style="margin:6px 0">${x.hold} сек${x.sides ? ' на каждую сторону' : ''}${c.ids.length > 1 ? ` · упражнение ${s.i + 1} из ${c.ids.length}` : ''}</div>
+    <ol style="padding-left:20px;margin:6px 0">${x.steps.map(t => `<li style="margin-bottom:6px">${esc(t)}</li>`).join('')}</ol>
+    <div class="hint" style="margin-bottom:10px">💡 ${esc(x.tip)}</div>
+    <div class="card" style="text-align:center"><div id="tmr" class="fk" style="font-size:44px">${x.hold}</div><div class="hint" id="tmrl">${x.sides ? 'Сторона 1' : 'Таймер'}</div>
+      <button class="full" style="margin-top:8px" data-act="sttimer">Старт таймера</button></div>
+    <div class="row"><button class="sec grow" data-act="stprev" ${s.i === 0 ? 'disabled style="opacity:.3"' : ''}>←</button><button class="full" style="flex:3" data-act="stdone">${c.done[id] ? 'Отмечено ✓' : 'Готово ✓'}</button><button class="sec grow" data-act="stnext" ${s.i >= c.ids.length - 1 ? 'disabled style="opacity:.3"' : ''}>→</button></div>`];
+}
+function runTimer(x) {
+  clearInterval(window._tm); window._tmOn = true; let side = 1, left = x.hold; const el = $('#tmr'), lab = $('#tmrl'), btn = $('[data-act=sttimer]');
+  if (btn) btn.textContent = 'Стоп';
+  window._tm = setInterval(() => {
+    left--; if (el) el.textContent = Math.max(0, left);
+    if (left <= 0) {
+      haptic('heavy');
+      if (x.sides && side === 1) { side = 2; left = x.hold; if (lab) lab.textContent = 'Сторона 2'; if (el) el.textContent = left; }
+      else { clearInterval(window._tm); window._tmOn = false; if (lab) lab.textContent = 'Готово'; if (btn) btn.textContent = 'Старт таймера'; }
+    }
+  }, 1000);
+}
+
+/* ---------- режим подхода (на весь экран) ---------- */
+const setDone = s => s.r > 0 || s.skip;
+function setQueue(a) {
+  const q = [], pos = ssPos(a.entries); let i = 0;
+  while (i < a.entries.length) {
+    const len = pos[i] ? pos[i].len : 1, idx = Array.from({ length: len }, (_, k) => i + k), max = Math.max(...idx.map(k => a.entries[k].sets.length));
+    for (let si = 0; si < max; si++) idx.forEach(k => { if (si < a.entries[k].sets.length) q.push({ ei: k, si }); });
+    i += len;
+  }
+  return q;
+}
+const nextSet = a => setQueue(a).find(p => !setDone(a.entries[p.ei].sets[p.si])) || null;
+const progressOf = a => { const q = setQueue(a); return { done: q.filter(p => setDone(a.entries[p.ei].sets[p.si])).length, total: q.length }; };
+const wKey = n => n.replace('.', ',');
+function focusEnter(p) {
+  const a = db.active; if (!p) { ui.focus = { step: 'end' }; return; }
+  const e = a.entries[p.ei], s = e.sets[p.si], sg = e.sug || (e.sug = suggestFor(e)), prevS = e.sets[p.si - 1];
+  ui.focus = { step: 'w', ei: p.ei, si: p.si, val: wKey(String(s.w > 0 ? s.w : prevS && prevS.w > 0 ? (s.d ? dropW(prevS.w) : prevS.w) : sg.w || '')), rval: '', pr: '' };
+}
+function focusOpen() { focusEnter(nextSet(db.active)); renderFocus(); }
+function focusHtml() {
+  const f = ui.focus, a = db.active, pg = progressOf(a), pct = pg.total ? Math.round(pg.done / pg.total * 100) : 0;
+  const top = `<div class="row" style="margin-bottom:10px"><button class="ic" data-act="fclose" aria-label="Закрыть">✕</button><div class="grow"><div class="fbar"><i style="width:${pct}%"></i></div></div><span class="hint" style="min-width:48px;text-align:right">${pg.done}/${pg.total}</span></div>`;
+  if (f.step === 'end') {
+    const sets = a.entries.reduce((n, e) => n + e.sets.filter(s => s.r > 0).length, 0), ton = a.entries.reduce((n, e) => n + e.sets.reduce((q, s) => q + (s.r > 0 ? s.w * s.r : 0), 0), 0), prs = a.entries.filter(e => e.pr).length, mins = Math.max(1, Math.round((Date.now() - a.start) / 60000));
+    return top + `<div style="text-align:center;margin:18px 0"><div style="font-size:64px" class="pop">🎉</div><div class="fk" style="font-size:28px">Тренировка пройдена</div></div>
+      <div class="card"><div class="grid2"><div class="hint">Подходов<br><b style="font-size:22px;color:var(--text)">${sets}</b></div><div class="hint">Тоннаж<br><b style="font-size:22px;color:var(--text)">${fmtMl(ton)} кг</b></div></div>
+      <div class="grid2" style="margin-top:8px"><div class="hint">Время<br><b style="font-size:22px;color:var(--text)">${mins} мин</b></div><div class="hint">Рекорды<br><b style="font-size:22px;color:var(--text)">${prs}</b></div></div></div>
+      ${db.blocks.cool.on ? `<button class="full sec" style="margin-bottom:10px" data-act="fcool">🧘 Заминка и растяжка</button>` : ''}
+      <button class="full fgo" data-act="ffinish">Сохранить тренировку ✓</button>
+      <button class="ghost" style="margin-top:8px" data-act="fclose">Вернуться к списку</button>`;
+  }
+  const e = a.entries[f.ei], s = e.sets[f.si], sg = e.sug || (e.sug = suggestFor(e)), pos = ssPos(a.entries)[f.ei];
+  const workIdx = e.sets.slice(0, f.si + 1).filter(x => !x.d).length, workTot = e.sets.filter(x => !x.d).length;
+  const tags = `${pos ? `<span class="badge">Суперсет ${pos.pos}/${pos.len}</span>` : ''}${s.d ? '<span class="badge">Дропсет ↓</span>' : ''}${e.blk ? '<span class="badge">Старт</span>' : ''}`;
+  const prev = lastSets(e.name, null), head = `<div>${tags}</div><div class="fk" style="font-size:26px;margin:6px 0 2px">${esc(e.name)}</div>
+    <div class="hint">${s.d ? 'Дропсет сразу после подхода, без отдыха' : `Подход ${workIdx} из ${workTot}`}${e.target ? ` · план ${esc(e.target)}` : ''}</div>`;
+  if (f.step === 'rest') {
+    const nx = nextSet(a), ne = nx && a.entries[nx.ei], left = Math.max(0, Math.ceil((f.rest - Date.now()) / 1000));
+    return top + `${f.pr ? `<div class="card pop" style="background:var(--raspberry);color:var(--accent-text);text-align:center;font-weight:800">🏆 ${esc(f.pr)}</div>` : ''}
+      <div style="text-align:center;margin:20px 0"><div class="fk" style="font-size:18px;color:var(--hint)">Отдых</div><div id="fr" class="fnum">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</div></div>
+      ${ne ? `<div class="card"><div class="hint">Дальше</div><b>${esc(ne.name)}</b><div class="hint">${ne.sets[nx.si].d ? 'Дропсет' : 'Подход ' + (nx.si + 1)}</div></div>` : ''}
+      <div class="row"><button class="sec grow" data-act="frest30">+30 сек</button><button class="sec grow" data-act="faddset">+ подход</button></div>
+      <div class="sp"></div><button class="full fgo" data-act="frskip">Дальше →</button>`;
+  }
+  const hint = `${prev ? `Прошлый раз: ${esc(setsText(prev))}` : ''}${sg.note ? `<div style="margin-top:4px">💡 ${esc(sg.note)}</div>` : ''}`;
+  const unitW = (getEx(e.name) || {}).e === 'dumbbell' ? [-2, -1, 1, 2] : [-5, -2.5, 2.5, 5];
+  if (f.step === 'w') return top + head + (hint ? `<div class="card hint" style="margin-top:10px">${hint}</div>` : '') +
+    `<div style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="fk" style="text-align:center;font-size:20px">Вес, кг</div>
+      <input class="fnum pop" id="fval" data-f="fval" inputmode="decimal" value="${esc(f.val)}" placeholder="0" aria-label="Вес">
+      <div class="fstep">${unitW.map(d => `<button class="sec" data-act="fadj" data-d="${d}">${d > 0 ? '+' : '−'}${wKey(String(Math.abs(d)))}</button>`).join('')}</div></div>
+      <button class="full fgo" data-act="fnext">Дальше →</button>
+      <div class="row" style="margin-top:8px"><button class="ghost grow" data-act="fskip">Пропустить подход</button></div>`;
+  const chips = []; for (let r = sg.lo; r <= Math.min(sg.hi, sg.lo + 7); r++) chips.push(r);
+  return top + head + `<div class="hint" style="margin-top:6px">Вес: <b>${esc(f.val || '0')} кг</b></div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="fk" style="text-align:center;font-size:20px">${sg.time ? 'Секунды' : 'Повторения'}</div>
+      <input class="fnum pop" id="fval" data-f="fval" inputmode="numeric" value="${esc(f.rval)}" placeholder="0" aria-label="Повторения">
+      ${sg.time ? '' : `<div class="chips" style="justify-content:center;flex-wrap:wrap;overflow:visible">${chips.map(r => `<button class="chip" data-act="fset" data-v="${r}">${r}</button>`).join('')}</div>`}
+      <div class="fstep" style="margin-top:8px">${(sg.time ? [-10, -5, 5, 10] : [-2, -1, 1, 2]).map(d => `<button class="sec" data-act="fadj" data-d="${d}">${d > 0 ? '+' : '−'}${Math.abs(d)}</button>`).join('')}</div></div>
+    <button class="full fgo" data-act="frec">Записать ✓</button>
+    <div class="row" style="margin-top:8px"><button class="ghost grow" data-act="fback">← К весу</button></div>`;
+}
+function renderFocus() {
+  const el = $('#focus'); if (!el) return;
+  if (ui.focus && db.active) { el.innerHTML = focusHtml(); el.classList.add('on'); document.body.classList.add('lock'); }
+  else { el.classList.remove('on'); el.innerHTML = ''; if (!ui.sheet) document.body.classList.remove('lock'); }
+}
+function restSecs(e) {
+  const x = getEx(e.name); return x && ['squat', 'hinge', 'hpress', 'vpress', 'vpull', 'hrow', 'legpress', 'ipress'].includes(x.p) ? 120 : 75;
+}
+function startRest(sec, pr) {
+  clearInterval(window._fr); const f = ui.focus; f.step = 'rest'; f.rest = Date.now() + sec * 1000; f.pr = pr || '';
+  renderFocus();
+  window._fr = setInterval(() => {
+    if (!ui.focus || ui.focus.step !== 'rest') { clearInterval(window._fr); return; }
+    const left = Math.max(0, Math.ceil((ui.focus.rest - Date.now()) / 1000)), el = $('#fr');
+    if (el) el.textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+    if (left <= 0) { clearInterval(window._fr); haptic('heavy'); focusEnter(nextSet(db.active)); renderFocus(); }
+  }, 500);
+}
+function focusAfter(cur, recorded) {
+  const a = db.active, nx = nextSet(a); clearInterval(window._fr);
+  if (!nx) { ui.focus = { step: 'end' }; renderFocus(); return; }
+  const pos = ssPos(a.entries), sameRun = pos[cur.ei] && pos[nx.ei] && a.entries[cur.ei].ss === a.entries[nx.ei].ss && nx.ei > cur.ei;
+  const nextDrop = nx.ei === cur.ei && a.entries[nx.ei].sets[nx.si].d;
+  if (!recorded || sameRun || nextDrop) { focusEnter(nx); renderFocus(); } else { ui.focus.nx = nx; startRest(pos[cur.ei] ? 90 : restSecs(a.entries[cur.ei]), ui.focus.prmsg); }
+}
+
+function blocksCard() {
+  const b = db.blocks, p = db.programs.find(x => x.id === b.opener.pid);
+  return `<div class="card"><h2>Блоки каждой тренировки</h2>
+    <label class="row"><input type="checkbox" data-f="blkopen" ${b.opener.on && p ? 'checked' : ''} ${p ? '' : 'disabled'}><span>Старт: суперсет в начале</span></label>
+    ${p ? `<div class="hint" style="margin:4px 0">${p.exercises.map(x => esc(x.name) + ' ' + x.sets + '×' + esc(x.reps)).join(' + ')}</div><button class="ghost" data-act="pedit" data-id="${p.id}">Изменить блок</button>` : '<button class="ghost" data-act="blknew">Создать стартовый блок</button>'}
+    <label class="row" style="margin-top:8px"><input type="checkbox" data-f="blkcool" ${b.cool.on ? 'checked' : ''}><span>Заминка и растяжка в конце</span></label></div>`;
+}
 
 /* ---------- генератор программ ---------- */
 const EQ_OK = { full: ['barbell', 'dumbbell', 'machine', 'cable', 'bodyweight'], free: ['barbell', 'dumbbell', 'bodyweight'], home: ['dumbbell', 'bodyweight'] };
@@ -606,7 +858,7 @@ function lastSets(name, skipId) {
   }
   return null;
 }
-const setsText = sets => sets.map(s => fmt(s.w) + '×' + s.r).join(', ');
+const setsText = sets => sets.map(s => (s.d ? '↓' : '') + fmt(s.w) + '×' + s.r).join(', ');
 
 /* ---------- бренд ---------- */
 function brandHeader() {
@@ -626,6 +878,7 @@ function render() {
   const v = { today: viewToday, programs: viewPrograms, lib: viewLib, history: viewHistory, progress: viewProgress }[ui.view];
   $('#app').innerHTML = brandHeader() + v();
   renderSheet();
+  renderFocus();
   if (ui.view === 'progress') drawCharts();
 }
 
@@ -636,29 +889,33 @@ function viewToday() {
     return `<h1>Сегодня</h1>
       ${last ? `<div class="hint" style="margin-bottom:10px">Последняя тренировка: ${esc(last.name)}, ${fmtDate(last.date)}</div>` : ''}
       <div class="card"><h2>Начать тренировку</h2>
-        ${db.programs.map(p => `<button class="full sec" style="margin-bottom:8px;text-align:left" data-act="start" data-id="${p.id}">${esc(p.grp ? p.grp + ' · ' + p.name : p.name)} <span class="hint">· ${p.exercises.length} упр.</span></button>`).join('')}
+        ${db.programs.filter(p => !p.opener).map(p => `<button class="full sec" style="margin-bottom:8px;text-align:left" data-act="start" data-id="${p.id}">${esc(p.grp ? p.grp + ' · ' + p.name : p.name)} <span class="hint">· ${p.exercises.length} упр.</span></button>`).join('')}
         <button class="full" data-act="start" data-id="">+ Пустая тренировка</button>
-        ${db.programs.length ? '' : '<div class="hint" style="margin-top:8px">Совет: откройте «Программы» → «Готовые» и добавьте подходящую программу в один тап.</div>'}
-      </div>${normCard()}${waterCard()}${suppsCard()}`;
+        ${db.programs.some(p => !p.opener) ? '' : '<div class="hint" style="margin-top:8px">Совет: откройте «Программы» → «Готовые» и добавьте подходящую программу в один тап.</div>'}
+      </div>${normCard()}${waterCard()}${suppsCard()}${db.blocks.cool.on ? coolCard(coolFor(GENERAL_GROUPS), 'free', 'Общая растяжка на всё тело после тренировки или в отдельный день.') : ''}`;
   }
   const n = a.entries.length;
   return `<h1>${esc(a.name)}</h1>
     <div class="card"><label class="hint">Название</label><input data-f="aname" value="${esc(a.name)}"></div>
+    ${(() => { const pg = progressOf(a); return pg.total ? `<div class="card"><div class="row"><div class="grow"><b>Режим подхода</b><div class="hint">Выполнено ${pg.done} из ${pg.total} подходов</div></div><button data-act="fopen">▶ ${pg.done ? 'Продолжить' : 'Начать'}</button></div></div>` : ''; })()}
     ${a.entries.map((e, ei) => {
-      const prev = lastSets(e.name, null);
-      return `<div class="card">
+      const prev = lastSets(e.name, null), sg = e.sug || (e.sug = suggestFor(e)), inf = ssPos(a.entries)[ei], linked = ei > 0 && e.ss && a.entries[ei - 1].ss === e.ss; let wn = 0;
+      return `<div class="card ${inf ? 'ss' : ''}">
+        ${inf ? `<div class="hint" style="margin-bottom:4px"><span class="badge">Суперсет ${inf.pos}/${inf.len}</span>${inf.pos === 1 ? ' подходы поочерёдно, отдых после круга' : ''}</div>` : ''}
         <div class="row"><h2 class="grow" style="margin:0">${esc(e.name)}</h2>
           <button class="ic" data-act="wup" data-ei="${ei}" ${ei === 0 ? 'disabled style="opacity:.25"' : ''}>↑</button>
           <button class="ic" data-act="wdown" data-ei="${ei}" ${ei === n - 1 ? 'disabled style="opacity:.25"' : ''}>↓</button>
           <button class="ghost" data-act="swapw" data-ei="${ei}">⇄ Заменить</button></div>
         ${prev ? `<div class="hint" style="margin:6px 0 4px">Прошлый раз: ${esc(setsText(prev))}</div>` : ''}
+        ${sg.note ? `<div class="hint">💡 ${esc(sg.note)}</div>` : ''}
         ${e.target ? `<div class="hint">План: ${esc(e.target)}</div>` : ''}
         <div class="set hint" style="margin-bottom:0"><span></span><span style="text-align:center">кг</span><span style="text-align:center">повт.</span><span></span></div>
-        ${e.sets.map((s, si) => `<div class="set"><span class="n">${si + 1}</span>
+        ${e.sets.map((s, si) => `<div class="set ${s.d ? 'drop' : ''}"><span class="n" ${si ? `data-act="tdrop" data-ei="${ei}" data-si="${si}"` : ''}>${s.d ? '↓' : ++wn}</span>
           <input inputmode="decimal" data-f="w" data-ei="${ei}" data-si="${si}" value="${s.w || ''}" placeholder="0">
           <input inputmode="numeric" data-f="r" data-ei="${ei}" data-si="${si}" value="${s.r || ''}" placeholder="0">
           <button class="danger" data-act="delset" data-ei="${ei}" data-si="${si}">✕</button></div>`).join('')}
-        <div class="row"><button class="ghost" data-act="addset" data-ei="${ei}">+ подход</button><span class="grow"></span><button class="danger" data-act="delex" data-ei="${ei}">Убрать упражнение</button></div>
+        <div class="row"><button class="ghost" data-act="addset" data-ei="${ei}">+ подход</button><button class="ghost" data-act="adddrop" data-ei="${ei}">+ дропсет</button><span class="grow"></span><button class="danger" data-act="delex" data-ei="${ei}">Убрать</button></div>
+        ${ei > 0 ? `<button class="ghost" data-act="wss" data-ei="${ei}">🔗 ${linked ? 'Разорвать суперсет' : 'В суперсет с предыдущим'}</button>` : ''}
       </div>`;
     }).join('')}
     <div class="card"><div class="row">
@@ -666,6 +923,7 @@ function viewToday() {
       <datalist id="exlist">${exNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
       <button data-act="addex">+</button></div>
       <div class="sp"></div><button class="full sec" data-act="pickw">📚 Выбрать из галереи</button></div>
+    ${db.blocks.cool.on ? coolCard(coolFor(activeGroups()), 'active', 'На мышцы, которые вы нагрузили сегодня.') : ''}
     ${waterCard()}${suppsCard()}
     <div class="card"><label class="hint">Заметка</label><textarea rows="2" data-f="note" placeholder="Самочувствие, сон, что запомнить">${esc(a.note || '')}</textarea></div>
     <div class="row"><button class="full" data-act="finish">Завершить ✓</button><button class="sec" data-act="cancel">Отмена</button></div>`;
@@ -678,7 +936,7 @@ function viewPrograms() {
     const n = e.exercises.length;
     return `<h1>${e.id ? 'Редактирование' : 'Новая программа'}</h1>
       <div class="card"><label class="hint">Название</label><input data-pe="name" value="${esc(e.name)}" placeholder="Например: Грудь + трицепс"></div>
-      ${e.exercises.map((x, i) => `<div class="card">
+      ${e.exercises.map((x, i) => { const inf = ssPos(e.exercises)[i], lk = i > 0 && x.ss && e.exercises[i - 1].ss === x.ss; return `<div class="card ${inf ? 'ss' : ''}">${inf ? `<div class="hint"><span class="badge">Суперсет ${inf.pos}/${inf.len}</span></div>` : ''}
         <div class="row"><input class="grow" list="exlist" data-pe="ex" data-i="${i}" value="${esc(x.name)}" placeholder="Упражнение">
           <button class="ic" data-act="pup" data-i="${i}" ${i === 0 ? 'disabled style="opacity:.25"' : ''}>↑</button>
           <button class="ic" data-act="pdown" data-i="${i}" ${i === n - 1 ? 'disabled style="opacity:.25"' : ''}>↓</button>
@@ -688,7 +946,8 @@ function viewPrograms() {
           <span class="hint">×</span>
           <input data-pe="reps" data-i="${i}" value="${esc(x.reps)}" placeholder="Повторов, напр. 8-12">
         </div>
-        <button class="ghost" style="margin-top:4px" data-act="swape" data-i="${i}">⇄ Подобрать аналог</button></div>`).join('')}
+        <label class="row" style="margin:8px 0 0"><input type="checkbox" data-f="pdrop" data-i="${i}" ${x.drop ? 'checked' : ''}><span>Дропсет в конце</span></label>
+        <div class="row" style="margin-top:4px"><button class="ghost" data-act="swape" data-i="${i}">⇄ Подобрать аналог</button>${i > 0 ? `<button class="ghost" data-act="pss" data-i="${i}">🔗 ${lk ? 'Разорвать суперсет' : 'В суперсет с предыдущим'}</button>` : ''}</div></div>`; }).join('')}
       <datalist id="exlist">${exNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
       <div class="row"><button class="ghost" data-act="padd">+ упражнение</button><button class="ghost" data-act="picke">📚 Из галереи</button></div>
       <div class="sp"></div>
@@ -707,9 +966,10 @@ function viewPrograms() {
         <div class="sp"></div><button class="full" data-act="tpladd" data-id="${t.id}">Добавить в мои программы</button></div>`).join('')}`;
   }
   const groups = [];
-  db.programs.forEach(p => { const g = p.grp || ''; let f = groups.find(x => x.g === g); if (!f) { f = { g, list: [] }; groups.push(f); } f.list.push(p); });
+  db.programs.filter(p => !p.opener).forEach(p => { const g = p.grp || ''; let f = groups.find(x => x.g === g); if (!f) { f = { g, list: [] }; groups.push(f); } f.list.push(p); });
   groups.sort((a, b) => (a.g ? 0 : 1) - (b.g ? 0 : 1));
   return `<h1>Программы</h1>${seg}
+    ${blocksCard()}
     ${groups.length ? groups.map(gr => `${gr.g ? `<div class="sechd">${esc(gr.g)}</div>` : (groups.length > 1 ? '<div class="sechd">Свои</div>' : '')}
       ${gr.list.map(p => `<div class="card">
         <div class="row"><h2 class="grow" style="margin:0">${esc(p.name)}</h2>
@@ -744,6 +1004,7 @@ function viewLib() {
 
 /* ---------- окна (sheet) ---------- */
 function renderSheet() {
+  clearInterval(window._tm); window._tmOn = false;
   const s = ui.sheet, el = $('#sheet');
   if (!s) { el.innerHTML = ''; document.body.classList.remove('lock'); return; }
   let t = '', b = '';
@@ -752,6 +1013,8 @@ function renderSheet() {
   else if (s.t === 'custom') [t, b] = customSheet(s);
   else if (s.t === 'settings') [t, b] = settingsSheet(s);
   else if (s.t === 'profile') [t, b] = profileSheet(s);
+  else if (s.t === 'cool') [t, b] = coolSheet(s);
+  else if (s.t === 'stretch') [t, b] = stretchSheet(s);
   el.innerHTML = `<div class="ov" data-act="sclose"><div class="sheet"><div class="grab"></div>
     <div class="row" style="margin-bottom:8px"><h2 class="grow" style="margin:0">${esc(t)}</h2><button class="ghost" data-act="sclose">Закрыть</button></div>${b}</div></div>`;
   document.body.classList.add('lock');
@@ -820,7 +1083,7 @@ function viewHistory() {
         <div class="row" data-act="toggle" data-id="${w.id}" style="cursor:pointer">
           <div class="grow"><b>${esc(w.name)}</b><div class="hint">${fmtDate(w.date)} · ${w.entries.length} упр. · объём ${fmt(vol)} кг${w.dur ? ' · ' + w.dur + ' мин' : ''}</div></div>
           <span class="hint">${open ? '▲' : '▼'}</span></div>
-        ${open ? `<div class="sp"></div>${w.entries.map(e => `<div style="margin:6px 0"><b>${esc(e.name)}</b><div class="hint">${esc(setsText(e.sets))}</div></div>`).join('')}
+        ${open ? `<div class="sp"></div>${w.entries.map(e => `<div style="margin:6px 0"><b>${e.ss ? '🔗 ' : ''}${esc(e.name)}</b><div class="hint">${esc(setsText(e.sets))}</div></div>`).join('')}
           ${w.note ? `<div class="hint">📝 ${esc(w.note)}</div>` : ''}
           <button class="danger" data-act="wdel" data-id="${w.id}">Удалить запись</button>` : ''}
       </div>`;
@@ -1018,21 +1281,16 @@ const A = {
   spdel(el) { db.settings.supps.splice(+el.dataset.i, 1); touchSettings(); renderSheet(); render(); },
   tab(el) { ui.just = false; ui.view = el.dataset.v; ui.edit = null; ui.sheet = null; render(); window.scrollTo(0, 0); },
   start(el) {
-    const p = db.programs.find(x => x.id === el.dataset.id);
-    db.active = {
-      id: uid(), start: Date.now(), date: ymd(new Date()), name: p ? (p.grp ? p.grp + ' · ' + p.name : p.name) : 'Тренировка', note: '',
-      entries: p ? p.exercises.filter(x => x.name.trim()).map(x => ({
-        name: x.name.trim(), target: x.sets + '×' + x.reps,
-        sets: Array.from({ length: Math.max(1, num(x.sets)) }, () => ({ w: 0, r: 0 }))
-      })) : []
-    };
-    db.active.entries.forEach(e => { const pr = lastSets(e.name, null); if (pr) e.sets.forEach((s, i) => { const q = pr[Math.min(i, pr.length - 1)]; s.w = q.w; }); });
-    ui.view = 'today'; save(); render(); window.scrollTo(0, 0); haptic();
+    const p = db.programs.find(x => x.id === el.dataset.id), o = db.blocks.opener, op = o.on && db.programs.find(x => x.id === o.pid), entries = [];
+    if (op && (!p || !p.opener)) mkEntries(op.exercises).forEach(e => { e.blk = 1; entries.push(e); });
+    if (p) mkEntries(p.exercises).forEach(e => entries.push(e));
+    db.active = { id: uid(), start: Date.now(), date: ymd(new Date()), name: p ? (p.grp ? p.grp + ' · ' + p.name : p.name) : 'Тренировка', note: '', entries };
+    ui.view = 'today'; ui.cool = null; save(); focusEnter(nextSet(db.active)); render(); window.scrollTo(0, 0); haptic();
   },
   addex() {
     const v = $('#newex').value.trim(); if (!v) return;
     const ex = getEx(v), name = ex ? ex.name : v, pr = lastSets(name, null);
-    db.active.entries.push({ name, target: '', sets: [{ w: pr ? pr[0].w : 0, r: 0 }] });
+    db.active.entries.push(mkEntry(name, '', 3));
     save(); render();
   },
   pickw() { openPick({ ctx: 'workout', mode: 'add' }); },
@@ -1043,6 +1301,46 @@ const A = {
   wup(el) { const i = +el.dataset.ei, a = db.active.entries; if (i > 0) { [a[i - 1], a[i]] = [a[i], a[i - 1]]; save(); render(); } },
   wdown(el) { const i = +el.dataset.ei, a = db.active.entries; if (i < a.length - 1) { [a[i + 1], a[i]] = [a[i], a[i + 1]]; save(); render(); } },
   delex(el) { confirmBox('Убрать упражнение?', () => { db.active.entries.splice(+el.dataset.ei, 1); save(); render(); }); },
+  wss(el) { toggleSS(db.active.entries, +el.dataset.ei); save(); render(); },
+  pss(el) { toggleSS(ui.edit.exercises, +el.dataset.i); render(); },
+  tdrop(el) { const s = db.active.entries[+el.dataset.ei].sets[+el.dataset.si]; s.d = s.d ? 0 : 1; if (s.d) { const pv = db.active.entries[+el.dataset.ei].sets[+el.dataset.si - 1]; if (pv && !(s.r > 0)) s.w = dropW(pv.w); } save(); render(); },
+  adddrop(el) { const e = db.active.entries[+el.dataset.ei], l = e.sets[e.sets.length - 1]; e.sets.push({ w: dropW(l ? l.w : 0), r: 0, d: 1 }); save(); render(); haptic(); },
+  blknew() { ensureOpener(true); save(); render(); },
+  fopen() { focusOpen(); },
+  fclose() { ui.focus = null; clearInterval(window._fr); render(); },
+  fadj(el) {
+    const f = ui.focus, isW = f.step === 'w'; let v = num(isW ? f.val : f.rval) + (+el.dataset.d); v = Math.max(0, Math.round(v * 10) / 10); if (!isW) v = Math.round(v);
+    const sv = wKey(String(v)); if (isW) f.val = sv; else f.rval = sv; const inp = $('#fval'); if (inp) inp.value = sv; haptic('light');
+  },
+  fset(el) { ui.focus.rval = el.dataset.v; const inp = $('#fval'); if (inp) inp.value = el.dataset.v; haptic('light'); },
+  fnext() {
+    const f = ui.focus, e = db.active.entries[f.ei], s = e.sets[f.si], sg = e.sug || (e.sug = suggestFor(e)), pv = e.sets[f.si - 1];
+    s.w = Math.max(0, num(f.val)); f.rval = String(pv && pv.r > 0 ? pv.r : sg.reps); f.step = 'r'; save(); renderFocus(); haptic('light');
+  },
+  fback() { ui.focus.step = 'w'; renderFocus(); },
+  frec() {
+    const f = ui.focus, e = db.active.entries[f.ei], s = e.sets[f.si], r = Math.round(num(f.rval)); if (!(r > 0)) { haptic('heavy'); return; }
+    s.r = r; s.skip = 0;
+    const ser = exSeries(e.name), bw = ser.length ? Math.max(...ser.map(p => p.w)) : 0, be = ser.length ? Math.max(...ser.map(p => p.e)) : 0;
+    let msg = ''; if (!e.pr && !s.d && s.w > 0 && bw > 0 && (s.w > bw || e1rm(s.w, r) > be * 1.001)) { e.pr = 1; msg = s.w > bw ? `Новый рекорд веса: ${fmt(s.w)} кг` : `Рекорд расчётного максимума: ${fmt(s.w)} кг × ${r}`; }
+    f.prmsg = msg; save(); haptic('medium'); focusAfter({ ei: f.ei, si: f.si }, true);
+  },
+  fskip() { const f = ui.focus; db.active.entries[f.ei].sets[f.si].skip = 1; save(); focusAfter({ ei: f.ei, si: f.si }, false); },
+  frskip() { clearInterval(window._fr); focusEnter(nextSet(db.active)); renderFocus(); },
+  frest30() { ui.focus.rest += 30000; renderFocus(); },
+  faddset() { const f = ui.focus, e = db.active.entries[f.ei], l = e.sets.filter(x => !x.d).slice(-1)[0]; e.sets.push({ w: l ? l.w : 0, r: 0 }); save(); renderFocus(); haptic(); },
+  fcool() { ui.focus = null; ui.cool = { ids: coolFor(activeGroups()), done: {}, ctx: 'active' }; ui.sheet = { t: 'cool' }; render(); },
+  ffinish() { ui.focus = null; A.finish(); },
+  coolopen(el) { const act = el.dataset.ctx === 'active'; if (!ui.cool || ui.cool.ctx !== el.dataset.ctx) ui.cool = { ids: coolFor(act ? activeGroups() : GENERAL_GROUPS), done: {}, ctx: el.dataset.ctx }; ui.sheet = { t: 'cool' }; renderSheet(); },
+  stopen(el) { ui.sheet = { t: 'stretch', i: +el.dataset.i }; renderSheet(); const sh = $('.sheet'); if (sh) sh.scrollTop = 0; },
+  stprev() { ui.sheet.i = Math.max(0, ui.sheet.i - 1); renderSheet(); },
+  stnext() { ui.sheet.i = Math.min(ui.cool.ids.length - 1, ui.sheet.i + 1); renderSheet(); },
+  stdone() { const id = ui.cool.ids[ui.sheet.i]; if (ui.cool.done[id]) delete ui.cool.done[id]; else ui.cool.done[id] = 1; haptic('medium'); if (ui.cool.done[id] && ui.sheet.i < ui.cool.ids.length - 1) ui.sheet.i++; else if (ui.cool.done[id]) ui.sheet = { t: 'cool' }; renderSheet(); },
+  sttimer() {
+    const x = STRID[ui.cool.ids[ui.sheet.i]];
+    if (window._tmOn) { clearInterval(window._tm); window._tmOn = false; const b = $('[data-act=sttimer]'); if (b) b.textContent = 'Старт таймера'; const e = $('#tmr'); if (e) e.textContent = x.hold; return; }
+    runTimer(x);
+  },
   addset(el) {
     const e = db.active.entries[+el.dataset.ei], l = e.sets[e.sets.length - 1];
     e.sets.push({ w: l ? l.w : 0, r: l ? l.r : 0 }); save(); render(); haptic();
@@ -1050,10 +1348,10 @@ const A = {
   delset(el) { db.active.entries[+el.dataset.ei].sets.splice(+el.dataset.si, 1); save(); render(); },
   finish() {
     const a = db.active;
-    const entries = a.entries.map(e => ({ name: e.name, sets: e.sets.filter(s => s.r > 0) })).filter(e => e.sets.length);
+    const entries = a.entries.map(e => { const o = { name: e.name, sets: e.sets.filter(s => s.r > 0).map(s => s.d ? { w: s.w, r: s.r, d: 1 } : { w: s.w, r: s.r }) }; if (e.ss) o.ss = e.ss; return o; }).filter(e => e.sets.length);
     if (!entries.length) { alert('Заполните хотя бы один подход (повторения больше нуля).'); return; }
-    db.workouts.push({ id: a.id, date: a.date, name: a.name || 'Тренировка', note: a.note, entries, dur: Math.max(1, Math.round((Date.now() - a.start) / 60000)) });
-    db.active = null; ui.view = 'history'; ui.just = true; ui.open[a.id] = true; save(); scheduleSync(); render(); window.scrollTo(0, 0);
+    db.workouts.push({ id: a.id, date: a.date, name: a.name || 'Тренировка', note: a.note, entries, dur: Math.max(1, Math.round((Date.now() - a.start) / 60000)), cool: ui.cool && ui.cool.ctx === 'active' ? Object.keys(ui.cool.done).length : 0 });
+    db.active = null; ui.focus = null; ui.cool = null; ui.view = 'history'; ui.just = true; ui.open[a.id] = true; save(); scheduleSync(); render(); window.scrollTo(0, 0);
     try { tg && tg.HapticFeedback.notificationOccurred('success'); } catch(e){}
   },
   cancel() { confirmBox('Отменить тренировку без сохранения?', () => { db.active = null; save(); render(); }); },
@@ -1095,7 +1393,7 @@ const A = {
   exopen(el) { ui.sheet = { t: 'detail', name: el.dataset.name }; renderSheet(); const sh = $('.sheet'); if (sh) sh.scrollTop = 0; },
   addtowork(el) {
     const name = el.dataset.name, pr = lastSets(name, null);
-    db.active.entries.push({ name, target: '', sets: [{ w: pr ? pr[0].w : 0, r: 0 }] });
+    db.active.entries.push(mkEntry(name, '', 3));
     ui.sheet = null; ui.view = 'today'; save(); render(); window.scrollTo(0, 0); haptic();
   },
   customnew() { const g = ui.gf.key !== 'all' && GROUPS[ui.gf.key] ? ui.gf.key : 'chest'; ui.sheet = { t: 'custom', name: '', g, m: DEF_MOVE[g], e: 'dumbbell' }; renderSheet(); },
@@ -1113,8 +1411,8 @@ const A = {
     const s = ui.sheet, name = el.dataset.name, pr = lastSets(name, null);
     if (s.ctx === 'workout') {
       const a = db.active;
-      if (s.mode === 'add') a.entries.push({ name, target: '', sets: [{ w: pr ? pr[0].w : 0, r: 0 }] });
-      else { const e = a.entries[s.idx]; e.name = name; e.target = ''; e.sets.forEach((st, i) => { st.w = pr ? pr[Math.min(i, pr.length - 1)].w : 0; }); }
+      if (s.mode === 'add') a.entries.push(mkEntry(name, '', 3));
+      else { const e = a.entries[s.idx]; e.name = name; e.target = ''; e.sug = suggestFor(e); applySug(e); }
       save();
     } else {
       if (s.mode === 'add') ui.edit.exercises.push({ name, sets: 3, reps: '8-12' });
@@ -1167,6 +1465,7 @@ document.addEventListener('input', ev => {
   else if (d.f === 'st') { let v = t.value; if (d.k === 'waterGoal' || d.k === 'water.every') v = Math.max(0, Math.round(num(v))); setPath(db.settings, d.k, v); touchSettings(); }
   else if (d.f === 'sp') { db.settings.supps[+d.i][d.k] = t.value; touchSettings(); }
   else if (d.f === 'bf') { ui.bf[d.k] = t.value; }
+  else if (d.f === 'fval') { if (ui.focus.step === 'w') ui.focus.val = t.value; else ui.focus.rval = t.value; }
   else if (d.f === 'pf') { db.profile[d.k] = t.value; db.profile.ts = Date.now(); save(); refreshProfile(); }
   else if (d.f === 'pw') { setTodayWeight(num(t.value)); refreshProfile(); }
   else if (d.pe && ui.edit) {
@@ -1177,6 +1476,9 @@ document.addEventListener('input', ev => {
 document.addEventListener('change', ev => {
   const t = ev.target, f = t.dataset.f;
   if (f === 'pex') { ui.pex = t.value; render(); }
+  else if (f === 'pdrop') { ui.edit.exercises[+t.dataset.i].drop = t.checked; }
+  else if (f === 'blkopen') { db.blocks.opener.on = t.checked; save(); }
+  else if (f === 'blkcool') { db.blocks.cool.on = t.checked; save(); }
   else if (f === 'pa') { db.profile.activity = +t.value; db.profile.ts = Date.now(); save(); refreshProfile(); renderBg(); }
   else if (f === 'pf' || f === 'pw') { renderBg(); }
   else if (f === 'stc') { setPath(db.settings, t.dataset.k, t.checked); touchSettings(); }
