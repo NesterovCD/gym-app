@@ -287,10 +287,11 @@ function normSettings(s) {
     supps: Array.isArray(s.supps) ? s.supps.map(p => ({ id: String(p.id || uid()), name: String(p.name || ''), time: p.time || '09:00', on: p.on !== false })) : []
   };
 }
+const defGen = () => ({ days: 4, min: 60, equip: 'full', level: 'mid', prio: [], limits: ['knee'] });
 const defProfile = () => ({ ts: 0, sex: 'm', age: '', height: '', activity: 1.55, goal: 'maint', adj: 0, adjDate: '' });
-let db = { ts: 0, programs: [], workouts: [], active: null, body: [], custom: [], water: [], supps: [], settings: defSettings(), profile: defProfile() };
+let db = { ts: 0, programs: [], workouts: [], active: null, body: [], custom: [], water: [], supps: [], settings: defSettings(), profile: defProfile(), gen: defGen() };
 const cloud = tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
-const fixDb = () => { db.programs = db.programs || []; db.workouts = db.workouts || []; db.body = db.body || []; db.custom = db.custom || []; db.water = db.water || []; db.supps = db.supps || []; db.settings = normSettings(db.settings); db.profile = Object.assign(defProfile(), db.profile || {}); };
+const fixDb = () => { db.programs = db.programs || []; db.workouts = db.workouts || []; db.body = db.body || []; db.custom = db.custom || []; db.water = db.water || []; db.supps = db.supps || []; db.settings = normSettings(db.settings); db.profile = Object.assign(defProfile(), db.profile || {}); db.gen = Object.assign(defGen(), db.gen || {}); if (!Array.isArray(db.gen.prio)) db.gen.prio = []; if (!Array.isArray(db.gen.limits)) db.gen.limits = []; };
 
 function cloudGet(keys) {
   return new Promise(res => cloud.getItems(keys, (err, v) => res(err ? null : v)));
@@ -358,6 +359,99 @@ async function syncNow() {
   syncBusy = false;
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - syncAt > 20000) syncNow(); });
+
+/* ---------- генератор программ ---------- */
+const EQ_OK = { full: ['barbell', 'dumbbell', 'machine', 'cable', 'bodyweight'], free: ['barbell', 'dumbbell', 'bodyweight'], home: ['dumbbell', 'bodyweight'] };
+const BAN = {
+  knee: { pat: ['squat', 'lunge', 'legext'], ids: [] },
+  back: { pat: [], ids: ['deadlift', 'rdl', 'dbrdl', 'bbrow', 'tbar', 'hyper', 'squat', 'frontsq', 'ohp', 'bulg'] },
+  shoulder: { pat: [], ids: ['ohp', 'arnold', 'dbohp', 'dips', 'tridips', 'benchdip', 'frontraise', 'fly', 'inclbb'] }
+};
+const SL = {
+  Q1: ['squat', 'hackmach', 'smithsq', 'legpress', 'frontsq', 'goblet'], Q2: ['legpress', 'hackmach', 'goblet', 'smithsq', 'bulg', 'lunge', 'hipthrust', 'glutebridge'],
+  Q3: ['legext', 'cablekick', 'abduct', 'glutebridge'], H1: ['rdl', 'dbrdl', 'deadlift', 'hipthrust'], H2: ['legcurlL', 'legcurlS'],
+  G1: ['hipthrust', 'glutebridge', 'cablekick', 'abduct'], C1: ['calfst', 'calflp', 'calfsit', 'calfdb'],
+  P1: ['bench', 'dbbench', 'chestpress', 'pushup'], P2: ['incldb', 'inclbb', 'chestpress', 'dbbench'], P3: ['cablecross', 'pecdeck', 'fly'],
+  V1: ['ohp', 'dbohp', 'machsp', 'arnold'], L1: ['latraise', 'cablelat'], R1: ['facepull', 'reardeck', 'rearfly'],
+  T1: ['pushdown', 'cableoh', 'pushbar', 'dbohext', 'skull', 'cgbp'],
+  B1: ['pullup', 'latpd', 'assistpull', 'chinup', 'latnarrow'], B2: ['bbrow', 'cablerow', 'machrow', 'dbrow', 'chestsup'], B3: ['cablerow', 'dbrow', 'machrow', 'chestsup', 'tbar'],
+  U1: ['bbcurl', 'dbcurl', 'cablecurl', 'ezcurl'], U2: ['hammer', 'ropehammer', 'inclcurl', 'conccurl'],
+  K1: ['plank', 'cablecrunch', 'crunch', 'sideplank'], K2: ['legraise', 'russian', 'woodchop', 'crunch', 'abwheel']
+};
+const D = {
+  fbA: ['Фулбади A', 'Q1m P1m B2m V1a U1i K1i C1i H2a'], fbB: ['Фулбади B', 'H1m P2a B1m Q2a L1i T1i K2i C1i'], fbC: ['Фулбади C', 'Q2m P2m B1m H2a R1i T1i K1i C1i'],
+  uA: ['Верх A', 'P1m B2m V1a B1a T1i U1i R1i'], lA: ['Низ A', 'Q1m H1m Q2a H2a C1i K1i G1a'],
+  uB: ['Верх B', 'P2m B1m V1a B3a L1i U2i T1i'], lB: ['Низ B', 'Q2m G1m H2a Q3i C1i K2i H1a'],
+  push: ['Толкай', 'P1m V1a P2a L1i T1i P3i T1i'], pull: ['Тяни', 'B1m B2m B3a R1i U1i U2i K2i'], legs: ['Ноги', 'Q1m H1m Q2a H2a Q3i C1i K1i'],
+  push2: ['Толкай B', 'P2m V1a P1a L1i T1i P3i'], pull2: ['Тяни B', 'B2m B1a B3a R1i U2i U1i K1i'], legs2: ['Ноги B', 'Q2m G1m H1a H2a C1i Q3i K2i']
+};
+const GEN_PLAN = (n, lvl) => n <= 2 ? ['fbA', 'fbB'] : n === 3 ? (lvl === 'adv' ? ['push', 'pull', 'legs'] : ['fbA', 'fbB', 'fbC']) : n === 4 ? ['uA', 'lA', 'uB', 'lB'] : n === 5 ? ['uA', 'lA', 'push', 'pull', 'legs'] : ['push', 'pull', 'legs', 'push2', 'pull2', 'legs2'];
+const GEN_WD = { 2: [1, 4], 3: [1, 3, 5], 4: [1, 2, 4, 5], 5: [1, 2, 3, 5, 6], 6: [1, 2, 3, 4, 5, 6] };
+const WDN = ['', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const GM = { chest: ['chest'], back: ['back'], shoulders: ['shoulders'], arms: ['biceps', 'triceps'], legs: ['quads', 'hams', 'calves'], core: ['core'] };
+const GPR = { chest: ['P2', 'P3'], back: ['B1', 'B3'], shoulders: ['L1', 'R1'], arms: ['U2', 'T1'], legs: ['Q2', 'G1', 'C1'], core: ['K2'] };
+const GTIME = { m: 3.5, a: 2.8, i: 2.2 };
+const genOk = (x, o) => EQ_OK[o.equip].includes(x.e) && !o.limits.some(l => BAN[l] && (BAN[l].ids.includes(x.id) || BAN[l].pat.includes(x.p)));
+function genProgram(o, seed = 0) {
+  o = Object.assign(defGen(), o); const used = new Set(), days = [];
+  const pick = (slot, dayIds) => {
+    const ok = SL[slot].map(id => LIBID[id]).filter(x => x && genOk(x, o) && !dayIds.has(x.id));
+    const fresh = ok.filter(x => !used.has(x.id)), c = fresh.length ? fresh : ok;
+    return c.length ? c[seed % Math.min(c.length, 2)] : null;
+  };
+  const mk = (x, role, slot) => {
+    const core = x.m === 'core' || x.g === 'core', hold = x.p === 'corestab';
+    let sets = role === 'm' ? (o.level === 'adv' ? 4 : 3) : role === 'a' ? 3 : (o.level === 'new' ? 2 : 3);
+    const reps = hold ? '45-60 сек' : core ? '12-15' : role === 'm' ? (o.level === 'new' ? '8-12' : '6-10') : role === 'a' ? '8-12' : (x.g === 'calves' ? '10-15' : '12-15');
+    return { id: x.id, name: x.name, g: x.g, sets, reps, role, slot };
+  };
+  const t = e => e.sets * GTIME[e.role], avail = Math.max(15, o.min - 8);
+  GEN_PLAN(o.days, o.level).forEach(key => {
+    const [name, spec] = D[key], dayIds = new Set(), ex = []; let est = 0;
+    spec.split(' ').forEach(tok => {
+      const slot = tok.slice(0, 2), role = tok[2], x = pick(slot, dayIds); if (!x) return;
+      const e = mk(x, role, slot);
+      if (ex.length >= 3 && est + t(e) > avail) return;
+      ex.push(e); dayIds.add(x.id); used.add(x.id); est += t(e);
+    });
+    days.push({ name, ex, est, dayIds });
+  });
+  o.prio.forEach(g => days.forEach(d => {
+    const mine = d.ex.filter(e => GM[g] && GM[g].includes(e.g)); if (!mine.length) return;
+    if (mine[0].sets < 5) { mine[0].sets++; d.est += GTIME[mine[0].role]; }
+    if (d.extra) return;
+    for (const slot of GPR[g]) { const x = pick(slot, d.dayIds); if (x) { const e = mk(x, 'i', slot); d.ex.push(e); d.dayIds.add(x.id); used.add(x.id); d.est += t(e); d.extra = 1; break; } }
+  }));
+  const notes = [];
+  if (o.limits.includes('knee')) notes.push('Колени: исключены приседания, выпады и разгибание ног. Жим ногами выполняйте в комфортной амплитуде без боли. При боли остановитесь и обратитесь к врачу.');
+  if (o.limits.includes('back')) notes.push('Поясница: исключены становые тяги, тяги в наклоне, приседания со штангой и гиперэкстензия. Упор на тренажёры и упоры грудью.');
+  if (o.limits.includes('shoulder')) notes.push('Плечи: исключены жимы над головой, отжимания на брусьях и разведения с глубокой растяжкой. Жимы идут в тренажёрах и на скамье.');
+  if (o.equip !== 'full') notes.push('Ограниченный инвентарь: часть упражнений заменена вариантами со штангой, гантелями и собственным весом.');
+  if (o.prio.length) notes.push('Приоритет: в выбранные группы добавлено по подходу и по одному упражнению в день.');
+  if (days.some(d => d.ex.length < 4)) notes.push('Из-за ограничений в некоторых днях получилось мало упражнений. Добавьте свои из галереи.');
+  return { title: 'План на ' + o.days + ' ' + (o.days < 5 ? 'дня' : 'дней'), days: days.map(d => ({ name: d.name, ex: d.ex, min: Math.round(d.est + 8) })), notes, wd: GEN_WD[o.days] || GEN_WD[4] };
+}
+const gchip = (k, v, t, on, act = 'gset') => `<button class="chip ${on ? 'on' : ''}" data-act="${act}" data-k="${k}" data-v="${v}">${esc(t)}</button>`;
+const gwrap = h => `<div class="chips" style="flex-wrap:wrap;overflow:visible;margin-bottom:6px">${h}</div>`;
+function viewGen() {
+  const g = db.gen, r = ui.gen.res;
+  const form = `<div class="card"><h2>Подбор программы</h2>
+    <label class="hint">Дней в неделю</label>${gwrap([2, 3, 4, 5, 6].map(n => gchip('days', n, String(n), g.days === n)).join(''))}
+    <label class="hint">Время на тренировку</label>${gwrap([[45, '45 мин'], [60, '60 мин'], [75, '75 мин'], [90, '90 мин']].map(([n, t]) => gchip('min', n, t, g.min === n)).join(''))}
+    <label class="hint">Инвентарь</label>${gwrap([['full', 'Полный зал'], ['free', 'Штанга и гантели'], ['home', 'Гантели и свой вес']].map(([k, t]) => gchip('equip', k, t, g.equip === k)).join(''))}
+    <label class="hint">Уровень</label>${gwrap([['new', 'Новичок'], ['mid', 'Средний'], ['adv', 'Опытный']].map(([k, t]) => gchip('level', k, t, g.level === k)).join(''))}
+    <label class="hint">Приоритет (ничего не выбрано: равномерно)</label>${gwrap([['chest', 'Грудь'], ['back', 'Спина'], ['shoulders', 'Плечи'], ['arms', 'Руки'], ['legs', 'Ноги'], ['core', 'Пресс']].map(([k, t]) => gchip('prio', k, t, g.prio.includes(k), 'gtog')).join(''))}
+    <label class="hint">Ограничения</label>${gwrap([['knee', 'Колени'], ['back', 'Поясница'], ['shoulder', 'Плечи']].map(([k, t]) => gchip('limits', k, t, g.limits.includes(k), 'gtog')).join(''))}
+    <button class="full" data-act="ggen">Составить программу</button></div>`;
+  if (!r) return form;
+  return form + `<div id="genres"><h2 style="margin:14px 0 8px">${esc(r.title)}</h2>
+    <div class="hint" style="margin-bottom:8px">Дни: ${r.wd.map(d => WDN[d]).join(', ')}. Ориентир по времени указан для каждой тренировки.</div>
+    ${r.days.map(d => `<div class="card"><div class="row"><h2 class="grow" style="margin:0">${esc(d.name)}</h2><span class="badge">~${d.min} мин</span></div>
+      ${d.ex.map(e => `<div class="hint">• ${esc(e.name)}: ${e.sets}×${esc(e.reps)}</div>`).join('')}</div>`).join('')}
+    ${r.notes.map(n => `<div class="hint" style="margin:6px 0">${esc(n)}</div>`).join('')}
+    <div class="sp"></div><button class="full" data-act="gadd">Добавить в мои программы</button>
+    <div class="row" style="margin-top:8px"><button class="sec grow" data-act="greroll">Другой вариант</button><button class="ghost grow" data-act="gremind">Напоминания по дням</button></div></div>`;
+}
 
 /* ---------- профиль и калории ---------- */
 const ACT = [[1.2, 'Сидячая, тренировок почти нет'], [1.375, 'Лёгкая: 1–3 тренировки/нед'], [1.55, 'Умеренная: 3–5 тренировок/нед'], [1.725, 'Высокая: 6–7 тренировок/нед'], [1.9, 'Очень высокая: тяжёлый труд']];
@@ -492,7 +586,7 @@ const badges = x => `<span class="badge">${esc(GROUPS[x.g])}</span><span class="
 
 /* ---------- state ---------- */
 const newBF = () => ({ date: ymd(new Date()) });
-const ui = { just: false, view: 'today', edit: null, open: {}, pex: '', metric: 'w', ptab: 'strength', pshow: 'my', gf: { by: 'muscle', key: 'all', q: '' }, sheet: null, bf: newBF(), bm: 'weight' };
+const ui = { just: false, view: 'today', edit: null, open: {}, pex: '', metric: 'w', ptab: 'strength', pshow: 'my', gf: { by: 'muscle', key: 'all', q: '' }, sheet: null, bf: newBF(), bm: 'weight', gen: { seed: 0, res: null } };
 const TABS = [['today','🏋️','Сегодня'],['programs','📋','Программы'],['lib','📚','Упражнения'],['history','📓','Дневник'],['progress','📈','Прогресс']];
 const BM = [['weight','Вес','кг'],['chest','Грудь','см'],['waist','Талия','см'],['hips','Бёдра','см'],['shoulders','Плечи','см'],['bicep','Бицепс','см'],['thigh','Бедро','см'],['calf','Икра','см']];
 
@@ -600,7 +694,8 @@ function viewPrograms() {
       <div class="sp"></div>
       <div class="row"><button class="full" data-act="psave">Сохранить</button><button class="sec" data-act="pcancel">Отмена</button></div>`;
   }
-  const seg = `<div class="pills"><button class="${ui.pshow === 'my' ? 'on' : ''}" data-act="pshow" data-v="my">Мои</button><button class="${ui.pshow === 'ready' ? 'on' : ''}" data-act="pshow" data-v="ready">Готовые</button></div>`;
+  const seg = `<div class="pills"><button class="${ui.pshow === 'my' ? 'on' : ''}" data-act="pshow" data-v="my">Мои</button><button class="${ui.pshow === 'ready' ? 'on' : ''}" data-act="pshow" data-v="ready">Готовые</button><button class="${ui.pshow === 'gen' ? 'on' : ''}" data-act="pshow" data-v="gen">Подобрать</button></div>`;
+  if (ui.pshow === 'gen') return `<h1>Программы</h1>${seg}${viewGen()}`;
   if (ui.pshow === 'ready') {
     return `<h1>Программы</h1>${seg}
       <div class="hint" style="margin-bottom:10px">Схемы собраны по типовым рекомендациям тренеров и спортивных ресурсов. После добавления любое упражнение можно заменить на аналог.</div>
@@ -902,6 +997,16 @@ const A = {
   },
   settings() { ui.sheet = { t: 'settings' }; renderSheet(); },
   profile() { ui.sheet = { t: 'profile' }; renderSheet(); },
+  gset(el) { const k = el.dataset.k; db.gen[k] = (k === 'days' || k === 'min') ? +el.dataset.v : el.dataset.v; ui.gen.res = null; save(); const y = scrollY; render(); scrollTo(0, y); },
+  gtog(el) { const a = db.gen[el.dataset.k], v = el.dataset.v, i = a.indexOf(v); if (i >= 0) a.splice(i, 1); else a.push(v); ui.gen.res = null; save(); const y = scrollY; render(); scrollTo(0, y); },
+  ggen() { ui.gen.seed = 0; ui.gen.res = genProgram(db.gen, 0); render(); const r = $('#genres'); if (r) r.scrollIntoView({ behavior: 'smooth', block: 'start' }); haptic(); },
+  greroll() { ui.gen.seed++; ui.gen.res = genProgram(db.gen, ui.gen.seed); const y = scrollY; render(); scrollTo(0, y); },
+  gadd() {
+    const r = ui.gen.res; if (!r) return; const d = new Date(), grp = r.title + ' · ' + String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+    r.days.forEach(x => db.programs.push({ id: uid(), grp, name: x.name, exercises: x.ex.map(e => ({ name: e.name, sets: e.sets, reps: e.reps })) }));
+    ui.pshow = 'my'; save(); render(); window.scrollTo(0, 0); haptic('medium');
+  },
+  gremind() { const r = ui.gen.res; if (!r) return; db.settings.workout.days = r.wd.slice(); db.settings.workout.on = true; touchSettings(); confirmBox('Напоминания о тренировке включены на ' + r.wd.map(d => WDN[d]).join(', ') + '. Время и дни меняются в настройках (⚙).', () => {}); },
   pset(el) { db.profile[el.dataset.k] = el.dataset.v; db.profile.ts = Date.now(); save(); renderSheet(); render(); },
   padj(el) { db.profile.adj = +el.dataset.v; db.profile.adjDate = todayStr(); db.profile.ts = Date.now(); save(); renderSheet(); render(); haptic('medium'); },
   stday(el) {
