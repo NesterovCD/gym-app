@@ -174,6 +174,21 @@ const num = v => { const n = parseFloat(String(v).replace(',', '.')); return isF
 const fmt = n => (Math.round(n * 10) / 10).toString().replace('.', ',');
 const e1rm = (w, r) => r > 0 ? w * (1 + r / 30) : 0;
 const haptic = t => { try { tg && tg.HapticFeedback.impactOccurred(t || 'light'); } catch(e){} };
+let screenLock = null;
+async function keepScreenAwake(on) {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    if (on && !screenLock) {
+      screenLock = await navigator.wakeLock.request('screen');
+      screenLock.addEventListener('release', () => { screenLock = null; });
+    } else if (!on && screenLock) {
+      const lock = screenLock; screenLock = null; await lock.release();
+    }
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && db && db.active) keepScreenAwake(true);
+});
 const confirmBox = (msg, cb) => {
   if (tg && tg.showConfirm && tg.isVersionAtLeast && tg.isVersionAtLeast('6.2')) tg.showConfirm(msg, ok => ok && cb());
   else if (confirm(msg)) cb();
@@ -817,21 +832,23 @@ function renderFocus() {
 function restSecs(e) {
   const x = getEx(e.name); return x && ['squat', 'hinge', 'hpress', 'vpress', 'vpull', 'hrow', 'legpress', 'ipress'].includes(x.p) ? 120 : 75;
 }
-function restSignal() {
-  haptic('heavy');
+function gymTone(notes, volume) {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext, ctx = new Ctx(), now = ctx.currentTime;
-    [0, .22].forEach((at, i) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = i ? 880 : 660; g.gain.setValueAtTime(.0001, now + at); g.gain.exponentialRampToValueAtTime(.13, now + at + .015); g.gain.exponentialRampToValueAtTime(.0001, now + at + .16); o.connect(g).connect(ctx.destination); o.start(now + at); o.stop(now + at + .18); });
-    setTimeout(() => ctx.close(), 600);
+    notes.forEach(([at, hz, len]) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.value = hz; g.gain.setValueAtTime(.0001, now + at); g.gain.exponentialRampToValueAtTime(volume, now + at + .012); g.gain.exponentialRampToValueAtTime(.0001, now + at + len); o.connect(g).connect(ctx.destination); o.start(now + at); o.stop(now + at + len + .02); });
+    setTimeout(() => ctx.close(), Math.max(...notes.map(x => x[0] + x[2])) * 1000 + 150);
   } catch (e) {}
 }
+function restCountdownSignal(left) { haptic('light'); gymTone([[0, 1175 + (5 - left) * 90, .12]], .1); }
+function restSignal() { haptic('heavy'); gymTone([[0, 1319, .18], [.2, 1568, .2], [.42, 2093, .34]], .16); }
 function startRest(sec, pr) {
-  clearInterval(window._fr); const f = ui.focus; f.step = 'rest'; f.rest = Date.now() + sec * 1000; f.pr = pr || ''; if (f.sound == null) f.sound = true;
+  clearInterval(window._fr); const f = ui.focus; f.step = 'rest'; f.rest = Date.now() + sec * 1000; f.pr = pr || ''; f.toneAt = 0; if (f.sound == null) f.sound = true;
   renderFocus();
   window._fr = setInterval(() => {
     if (!ui.focus || ui.focus.step !== 'rest') { clearInterval(window._fr); return; }
     const left = Math.max(0, Math.ceil((ui.focus.rest - Date.now()) / 1000)), el = $('#fr');
     if (el) el.textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+    if (left <= 5 && left > 0 && ui.focus.sound !== false && ui.focus.toneAt !== left) { ui.focus.toneAt = left; restCountdownSignal(left); }
     if (left <= 0) { clearInterval(window._fr); const preset = ui.focus && ui.focus.nx; if (!ui.focus || ui.focus.sound !== false) restSignal(); focusEnter(nextSet(db.active), preset); renderFocus(); }
   }, 500);
 }
@@ -2383,6 +2400,7 @@ const A = {
     if (p) mkEntries(p.exercises).forEach(e => entries.push(e));
     if (db.blocks.warm.on) { const fe = entries.find(e => !e.blk && !e.ss && mkWarm(e).length); if (fe) { fe.warm = 1; fe.sets.unshift(...mkWarm(fe)); } }
     db.active = { id: uid(), pid: p ? p.id : '', start: Date.now(), date: ymd(new Date()), name: p ? (p.grp ? p.grp + ' · ' + p.name : p.name) : 'Тренировка', note: '', entries };
+    keepScreenAwake(true);
     ui.view = 'today'; ui.cool = null; save(); focusEnter(nextSet(db.active)); render(); window.scrollTo(0, 0); haptic();
   },
   addex() {
@@ -2429,7 +2447,7 @@ const A = {
   dloadoff() { db.health.deload = null; save(); render(); },
   frpe(el) { const f = ui.focus, e = db.active.entries[f.ei], s = e.sets[f.si], v = +el.dataset.v; s.rpe = s.rpe === v ? 0 : v; propagate(e, f.si); save(); haptic(); renderFocus(); },
   frskip() { clearInterval(window._fr); focusEnter(nextSet(db.active)); renderFocus(); },
-  frest30() { ui.focus.rest += 30000; renderFocus(); },
+  frest30() { ui.focus.rest += 30000; ui.focus.toneAt = 0; renderFocus(); },
   frsound() { ui.focus.sound = ui.focus.sound === false; renderFocus(); haptic('light'); },
   fradj(el) {
     const p = ui.focus.nx, isW = el.dataset.k === 'w'; if (!p) return;
@@ -2460,10 +2478,10 @@ const A = {
     const entries = a.entries.map(e => { const o = { name: e.name, sets: e.sets.filter(s => s.r > 0 && !s.wu).map(s => { const o = { w: s.w, r: s.r }; if (s.d) o.d = 1; if (s.rpe) o.rpe = s.rpe; return o; }) }; if (e.ss) o.ss = e.ss; return o; }).filter(e => e.sets.length);
     if (!entries.length) { alert('Заполните хотя бы один подход (повторения больше нуля).'); return; }
     db.workouts.push({ id: a.id, pid: a.pid || '', date: a.date, name: a.name || 'Тренировка', note: a.note, entries, dur: Math.max(1, Math.round((Date.now() - a.start) / 60000)), cool: ui.cool && ui.cool.ctx === 'active' ? Object.keys(ui.cool.done).length : 0 });
-    db.active = null; ui.focus = null; ui.cool = null; ui.view = 'history'; ui.just = true; ui.open[a.id] = true; save(); scheduleSync(); render(); window.scrollTo(0, 0);
+    db.active = null; keepScreenAwake(false); ui.focus = null; ui.cool = null; ui.view = 'history'; ui.just = true; ui.open[a.id] = true; save(); scheduleSync(); render(); window.scrollTo(0, 0);
     try { tg && tg.HapticFeedback.notificationOccurred('success'); } catch(e){}
   },
-  cancel() { confirmBox('Отменить тренировку без сохранения?', () => { db.active = null; save(); render(); }); },
+  cancel() { confirmBox('Отменить тренировку без сохранения?', () => { db.active = null; keepScreenAwake(false); save(); render(); }); },
   toggle(el) { ui.open[el.dataset.id] = !ui.open[el.dataset.id]; render(); },
   wdel(el) { confirmBox('Удалить запись?', () => { const i = db.workouts.findIndex(w => w.id === el.dataset.id); if (i < 0) return; const w = db.workouts.splice(i, 1)[0]; save(); render(); snack('Тренировка удалена', () => { db.workouts.splice(Math.min(i, db.workouts.length), 0, w); save(); scheduleSync(); render(); }); }); },
   snackundo() { const f = snackUndo; snackUndo = null; const el = document.getElementById('snack'); if (el) el.style.display = 'none'; if (f) f(); },
@@ -2727,7 +2745,7 @@ document.addEventListener('change', ev => {
 window.addEventListener('resize', () => { if (ui.view === 'progress') drawCharts(); });
 
 loadAll().then(() => {
-  if (db.active) ui.view = 'today';
+  if (db.active) { ui.view = 'today'; keepScreenAwake(true); }
   render();
   if (new URLSearchParams(location.search).get('go') === 'settings') { ui.sheet = { t: 'settings' }; renderSheet(); }
   if (new URLSearchParams(location.search).get('go') === 'food') { ui.view = 'nutr'; ui.ntab = 'diary'; render(); }
