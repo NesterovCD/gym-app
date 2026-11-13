@@ -747,13 +747,13 @@ function setQueue(a) {
 const nextSet = a => setQueue(a).find(p => !setDone(a.entries[p.ei].sets[p.si])) || null;
 const progressOf = a => { const q = setQueue(a); return { done: q.filter(p => setDone(a.entries[p.ei].sets[p.si])).length, total: q.length }; };
 const wKey = n => n.replace('.', ',');
-function focusEnter(p) {
+function focusEnter(p, preset) {
   const a = db.active; if (!p) { ui.focus = { step: 'end' }; return; }
   const e = a.entries[p.ei], s = e.sets[p.si], sg = e.sug || (e.sug = suggestFor(e)), prevS = e.sets[p.si - 1], pw = prevS && !prevS.wu ? prevS : null;
-  if (s.wu) { ui.focus = { step: 'w', ei: p.ei, si: p.si, val: wKey(String(s.w)), rval: String(s.tr || 5), pr: '' }; return; }
+  if (s.wu) { ui.focus = { step: 'w', ei: p.ei, si: p.si, val: preset && preset.val != null ? preset.val : wKey(String(s.w)), rval: preset && preset.rval != null ? preset.rval : String(s.tr || 5), pr: '' }; return; }
   let w = s.w > 0 ? s.w : (pw && pw.w > 0 ? (s.d ? dropW(pw.w) : pw.w) : sg.w || 0);
   if ((s.sg || !(s.w > 0)) && pw && pw.r > 0) w = s.d ? dropW(pw.w) : Math.max(0, pw.w + rpeDelta(pw, e));
-  ui.focus = { step: 'w', ei: p.ei, si: p.si, val: wKey(String(w > 0 ? w : '')), rval: '', pr: '' };
+  ui.focus = { step: 'w', ei: p.ei, si: p.si, val: preset && preset.val != null ? preset.val : wKey(String(w > 0 ? w : '')), rval: preset && preset.rval != null ? preset.rval : '', pr: '' };
 }
 function focusOpen() { refreshSugs(); focusEnter(nextSet(db.active)); renderFocus(); }
 function focusHtml() {
@@ -775,11 +775,20 @@ function focusHtml() {
     <div class="hint">${s.d ? 'Дропсет сразу после подхода, без отдыха' : s.wu ? `Разминочный подход ${wuIdx} из ${wuTot}, лёгкий вес` : `Подход ${workIdx} из ${workTot}`}${e.target ? ` · план ${esc(e.target)}` : ''}</div>`;
   if (f.step === 'rest') {
     const nx = nextSet(a), ne = nx && a.entries[nx.ei], left = Math.max(0, Math.ceil((f.rest - Date.now()) / 1000));
+    const ns = nx && ne.sets[nx.si], nsg = ne && (ne.sug || (ne.sug = suggestFor(ne))), ntime = nsg && nsg.time;
+    const nunit = ne && (getEx(ne.name) || {}).e === 'dumbbell' ? [-2, -1, 1, 2] : [-5, -2.5, 2.5, 5];
+    const savedPlan = f.nx && nx && f.nx.ei === nx.ei && f.nx.si === nx.si ? f.nx : null;
+    const plan = nx ? Object.assign({ ei: nx.ei, si: nx.si, val: wKey(String(ns.w > 0 ? ns.w : (nsg.w || ''))), rval: ntime ? '' : String(nsg.reps || '') }, savedPlan || {}) : null;
+    if (plan && (!f.nx || f.nx !== plan)) f.nx = plan;
     return top + `${f.pr ? `<div class="card pop" style="background:var(--raspberry);color:var(--accent-text);text-align:center;font-weight:800">🏆 ${esc(f.pr)}</div>` : ''}
       <div style="text-align:center;margin:20px 0"><div class="fk" style="font-size:24px;color:var(--hint)">Отдых</div><div id="fr" class="fnum">${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}</div></div>
-      ${ne ? `<div class="card"><div class="hint">Дальше</div><b>${esc(ne.name)}</b><div class="hint">${ne.sets[nx.si].d ? 'Дропсет' : ne.sets[nx.si].wu ? 'Разминка' : 'Подход ' + ne.sets.slice(0, nx.si + 1).filter(x => !x.wu && !x.d).length}</div></div>` : ''}
+      ${ne ? `<div class="card"><div class="hint">Готовим следующий подход</div><b>${esc(ne.name)}</b><div class="hint">${ns.d ? 'Дропсет' : ns.wu ? 'Разминка' : 'Подход ' + ne.sets.slice(0, nx.si + 1).filter(x => !x.wu && !x.d).length}</div>
+        <div class="grid2" style="margin-top:10px"><div><label class="hint">Вес, кг</label><input data-f="frval" data-k="w" inputmode="decimal" value="${esc(plan.val)}" aria-label="Вес следующего подхода"></div><div><label class="hint">${ntime ? 'Секунды' : 'Повторы'}</label><input data-f="frval" data-k="r" inputmode="numeric" value="${esc(plan.rval)}" aria-label="Повторы следующего подхода"></div></div>
+        <div class="fstep" style="margin-top:8px">${nunit.map(d => `<button class="sec" data-act="fradj" data-k="w" data-d="${d}">${d > 0 ? '+' : '−'}${wKey(String(Math.abs(d)))}</button>`).join('')}</div>
+        ${ntime ? '' : `<div class="chips" style="justify-content:center;flex-wrap:wrap;overflow:visible;margin-top:8px">${Array.from({length: Math.min(8, Math.max(1, nsg.hi - nsg.lo + 1))}, (_, i) => nsg.lo + i).map(r => `<button class="chip ${String(r) === String(plan.rval) ? 'on' : ''}" data-act="frset" data-v="${r}">${r}</button>`).join('')}</div>`}
+        ${nsg.note ? `<div class="hint" style="margin-top:8px">💡 ${esc(nsg.note)}</div>` : ''}</div>` : ''}
       ${!s.wu && !s.d && !pos && s.w > 0 ? `<div class="card"><div class="hint">Как зашёл подход?</div><div class="row" style="margin-top:6px">${[[1, 'Легко'], [2, 'Нормально'], [3, 'Тяжело']].map(([v, t]) => `<button class="${s.rpe === v ? '' : 'sec'} grow" style="padding:12px 2px;font-size:15px" data-act="frpe" data-v="${v}">${t}</button>`).join('')}</div>${s.rpe && e.sets.some((x, j) => j > f.si && !x.r && !x.d && !x.wu) ? `<div class="hint" style="margin-top:6px">Следующий подход: <b>${fmt(Math.max(0, s.w + rpeDelta(s, e)))} кг</b></div>` : ''}</div>` : ''}
-      <div class="row"><button class="sec grow" data-act="frest30">+30 сек</button><button class="sec grow" data-act="faddset">+ подход</button></div>
+      <div class="row"><button class="sec grow" data-act="frest30">+30 сек</button><button class="sec grow" data-act="frsound">${f.sound === false ? '🔕 Без звука' : '🔔 Звук'}</button><button class="sec grow" data-act="faddset">+ подход</button></div>
       <div class="sp"></div><button class="full fgo" data-act="frskip">Дальше →</button>`;
   }
   const hint = s.wu ? `Лёгкий вес, чтобы разогреть суставы и вспомнить движение. Цель: ${s.tr || 5} повторений без усилия.` : `${prev ? `Прошлый раз: ${esc(setsText(prev))}` : ''}${sg.note ? `<div style="margin-top:4px">💡 ${esc(sg.note)}</div>` : ''}`;
@@ -808,14 +817,22 @@ function renderFocus() {
 function restSecs(e) {
   const x = getEx(e.name); return x && ['squat', 'hinge', 'hpress', 'vpress', 'vpull', 'hrow', 'legpress', 'ipress'].includes(x.p) ? 120 : 75;
 }
+function restSignal() {
+  haptic('heavy');
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext, ctx = new Ctx(), now = ctx.currentTime;
+    [0, .22].forEach((at, i) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = i ? 880 : 660; g.gain.setValueAtTime(.0001, now + at); g.gain.exponentialRampToValueAtTime(.13, now + at + .015); g.gain.exponentialRampToValueAtTime(.0001, now + at + .16); o.connect(g).connect(ctx.destination); o.start(now + at); o.stop(now + at + .18); });
+    setTimeout(() => ctx.close(), 600);
+  } catch (e) {}
+}
 function startRest(sec, pr) {
-  clearInterval(window._fr); const f = ui.focus; f.step = 'rest'; f.rest = Date.now() + sec * 1000; f.pr = pr || '';
+  clearInterval(window._fr); const f = ui.focus; f.step = 'rest'; f.rest = Date.now() + sec * 1000; f.pr = pr || ''; if (f.sound == null) f.sound = true;
   renderFocus();
   window._fr = setInterval(() => {
     if (!ui.focus || ui.focus.step !== 'rest') { clearInterval(window._fr); return; }
     const left = Math.max(0, Math.ceil((ui.focus.rest - Date.now()) / 1000)), el = $('#fr');
     if (el) el.textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
-    if (left <= 0) { clearInterval(window._fr); haptic('heavy'); focusEnter(nextSet(db.active)); renderFocus(); }
+    if (left <= 0) { clearInterval(window._fr); const preset = ui.focus && ui.focus.nx; if (!ui.focus || ui.focus.sound !== false) restSignal(); focusEnter(nextSet(db.active), preset); renderFocus(); }
   }, 500);
 }
 function focusAfter(cur, recorded) {
@@ -823,7 +840,7 @@ function focusAfter(cur, recorded) {
   if (!nx) { ui.focus = { step: 'end' }; renderFocus(); return; }
   const pos = ssPos(a.entries), sameRun = pos[cur.ei] && pos[nx.ei] && a.entries[cur.ei].ss === a.entries[nx.ei].ss && nx.ei > cur.ei;
   const nextDrop = nx.ei === cur.ei && a.entries[nx.ei].sets[nx.si].d;
-  if (!recorded || sameRun || nextDrop) { focusEnter(nx); renderFocus(); } else { ui.focus.nx = nx; startRest(a.entries[cur.ei].sets[cur.si].wu ? 45 : pos[cur.ei] ? 90 : restSecs(a.entries[cur.ei]), ui.focus.prmsg); }
+  if (!recorded || sameRun || nextDrop) { focusEnter(nx); renderFocus(); } else { ui.focus.nx = { ei: nx.ei, si: nx.si }; startRest(a.entries[cur.ei].sets[cur.si].wu ? 45 : pos[cur.ei] ? 90 : restSecs(a.entries[cur.ei]), ui.focus.prmsg); }
 }
 
 function blocksCard() {
@@ -2413,6 +2430,13 @@ const A = {
   frpe(el) { const f = ui.focus, e = db.active.entries[f.ei], s = e.sets[f.si], v = +el.dataset.v; s.rpe = s.rpe === v ? 0 : v; propagate(e, f.si); save(); haptic(); renderFocus(); },
   frskip() { clearInterval(window._fr); focusEnter(nextSet(db.active)); renderFocus(); },
   frest30() { ui.focus.rest += 30000; renderFocus(); },
+  frsound() { ui.focus.sound = ui.focus.sound === false; renderFocus(); haptic('light'); },
+  fradj(el) {
+    const p = ui.focus.nx, isW = el.dataset.k === 'w'; if (!p) return;
+    let v = num(isW ? p.val : p.rval) + (+el.dataset.d); v = Math.max(0, Math.round(v * 10) / 10); if (!isW) v = Math.round(v);
+    if (isW) p.val = wKey(String(v)); else p.rval = String(v); renderFocus(); haptic('light');
+  },
+  frset(el) { if (ui.focus.nx) { ui.focus.nx.rval = el.dataset.v; renderFocus(); haptic('light'); } },
   faddset() { const f = ui.focus, e = db.active.entries[f.ei], l = e.sets.filter(x => !x.d && !x.wu).slice(-1)[0]; e.sets.push({ w: l ? l.w : 0, r: 0, sg: 1 }); save(); renderFocus(); haptic(); },
   fcool() { ui.focus = null; ui.cool = { ids: coolFor(activeGroups()), done: {}, ctx: 'active' }; ui.sheet = { t: 'cool' }; render(); },
   ffinish() { ui.focus = null; A.finish(); },
@@ -2651,6 +2675,7 @@ document.addEventListener('input', ev => {
   else if (d.f === 'sp') { db.settings.supps[+d.i][d.k] = t.value; touchSettings(); }
   else if (d.f === 'bf') { ui.bf[d.k] = t.value; }
   else if (d.f === 'fval') { if (ui.focus.step === 'w') { ui.focus.val = t.value; const pl = $('#plates'); if (pl) pl.textContent = plateText(num(t.value)); } else ui.focus.rval = t.value; }
+  else if (d.f === 'frval') { if (ui.focus && ui.focus.nx) ui.focus.nx[d.k === 'w' ? 'val' : 'rval'] = t.value; }
   else if (d.f === 'pf') { db.profile[d.k] = t.value; db.profile.ts = Date.now(); save(); refreshProfile(); }
   else if (d.f === 'hr') { const r = recEntry(true); r[d.k] = d.k === 'pulse' ? Math.round(num(t.value)) : num(t.value); if (d.k === 'sleep') r.sleepSrc = 'm'; r.ts = Date.now(); save(); const h = $('#hready'); if (h) h.innerHTML = readyBlock(); }
   else if (d.f === 'nq') { ui.nq = t.value; const r = $('#nqres'); if (r) r.innerHTML = ingChips(ui.nq, 'ndis', db.nutr.prefs.dislike); }
