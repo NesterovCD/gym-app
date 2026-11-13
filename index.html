@@ -342,11 +342,11 @@ function normSettings(s) {
 const defBlocks = () => ({ opener: { on: true, pid: '', made: false }, cool: { on: true }, warm: { on: true } });
 const defGen = () => ({ days: 4, min: 60, equip: 'full', level: 'mid', prio: [], limits: ['knee'] });
 const defProfile = () => ({ ts: 0, sex: 'm', age: '', height: '', activity: 1.55, goal: 'maint', adj: 0, adjDate: '' });
-const defNutr = () => ({ prefs: { meals: 4, excl: [], dislike: [] }, menu: null, shop: { checked: {}, extra: [] }, fridge: [], diary: [] });
+const defNutr = () => ({ prefs: { meals: 4, excl: [], dislike: [] }, menu: null, shop: { checked: {}, extra: [] }, fridge: [], diary: [], fav: [] });
 const defHealth = () => ({ rec: [], labs: [], ref: {}, deload: null });
 let db = { ts: 0, programs: [], workouts: [], active: null, body: [], custom: [], water: [], supps: [], settings: defSettings(), profile: defProfile(), gen: defGen(), blocks: defBlocks(), health: defHealth(), plan: { days: {} }, nutr: defNutr() };
 const cloud = tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast('6.9') ? tg.CloudStorage : null;
-const fixDb = () => { { const n = Object.assign(defNutr(), db.nutr || {}); n.prefs = Object.assign(defNutr().prefs, n.prefs || {}); ['excl', 'dislike'].forEach(k => { if (!Array.isArray(n.prefs[k])) n.prefs[k] = []; }); ['fridge', 'diary'].forEach(k => { if (!Array.isArray(n[k])) n[k] = []; }); n.shop = Object.assign({ checked: {}, extra: [] }, n.shop || {}); if (!Array.isArray(n.shop.extra)) n.shop.extra = []; db.nutr = n; } db.health = Object.assign(defHealth(), db.health || {}); ['rec','labs'].forEach(k => { if (!Array.isArray(db.health[k])) db.health[k] = []; }); if (!db.health.ref || typeof db.health.ref !== 'object') db.health.ref = {}; db.programs = db.programs || []; db.workouts = db.workouts || []; db.body = db.body || []; db.custom = db.custom || []; db.water = db.water || []; db.supps = db.supps || []; db.settings = normSettings(db.settings); db.profile = Object.assign(defProfile(), db.profile || {}); db.gen = Object.assign(defGen(), db.gen || {}); if (!Array.isArray(db.gen.prio)) db.gen.prio = []; if (!Array.isArray(db.gen.limits)) db.gen.limits = [];
+const fixDb = () => { { const n = Object.assign(defNutr(), db.nutr || {}); n.prefs = Object.assign(defNutr().prefs, n.prefs || {}); ['excl', 'dislike'].forEach(k => { if (!Array.isArray(n.prefs[k])) n.prefs[k] = []; }); ['fridge', 'diary', 'fav'].forEach(k => { if (!Array.isArray(n[k])) n[k] = []; }); n.shop = Object.assign({ checked: {}, extra: [] }, n.shop || {}); if (!Array.isArray(n.shop.extra)) n.shop.extra = []; db.nutr = n; } db.health = Object.assign(defHealth(), db.health || {}); ['rec','labs'].forEach(k => { if (!Array.isArray(db.health[k])) db.health[k] = []; }); if (!db.health.ref || typeof db.health.ref !== 'object') db.health.ref = {}; db.programs = db.programs || []; db.workouts = db.workouts || []; db.body = db.body || []; db.custom = db.custom || []; db.water = db.water || []; db.supps = db.supps || []; db.settings = normSettings(db.settings); db.profile = Object.assign(defProfile(), db.profile || {}); db.gen = Object.assign(defGen(), db.gen || {}); if (!Array.isArray(db.gen.prio)) db.gen.prio = []; if (!Array.isArray(db.gen.limits)) db.gen.limits = [];
   const b = db.blocks || {}; db.blocks = { opener: Object.assign({ on: true, pid: '', made: false }, b.opener || {}), cool: Object.assign({ on: true }, b.cool || {}), warm: Object.assign({ on: true }, b.warm || {}) }; if (!db.plan || typeof db.plan !== 'object' || typeof db.plan.days !== 'object') db.plan = { days: {} }; db.cab = Object.assign({ health: false }, db.cab || {}); if (db.nutr.menu && Array.isArray(db.nutr.menu.days) && db.nutr.menu.days.some(d => (d.meals || []).some(m => typeof RECID === 'undefined' ? false : !RECID[m.rid]))) db.nutr.menu = null; ensureOpener(); };
 function ensureOpener(force) {
   const b = db.blocks.opener;
@@ -1942,6 +1942,9 @@ function swapMeal(di, mi) {
 const dEntries = d => db.nutr.diary.filter(x => x.date === d && !x.del);
 const dTotals = d => dEntries(d).reduce((o, x) => { o.k += x.k * x.m; o.p += x.p * x.m; o.f += x.f * x.m; o.c += x.c * x.m; return o; }, { k: 0, p: 0, f: 0, c: 0 });
 function addFood(date, name, mac, m, src) { const e = { id: uid(), date, name, k: mac.k, p: mac.p, f: mac.f, c: mac.c, m: m || 1, src: src || '', ts: Date.now() }; db.nutr.diary.push(e); return e; }
+function addFoodQuick(e) {
+  const x = foodClone(e); addFood(todayStr(), x.name, x, x.m, x.src); save(); ui.sheet = null; ui.view = 'nutr'; ui.ntab = 'diary'; render(); haptic();
+}
 function eatMeal(di, mi) {
   const dy = db.nutr.menu.days[di], m = dy.meals[mi], r = RECID[m.rid];
   if (m.done) { const e = db.nutr.diary.find(x => x.id === m.done); if (e) { e.del = true; e.ts = Date.now(); } m.done = ''; }
@@ -1977,7 +1980,7 @@ function viewDiary() {
     ${di >= 0 && mn.days[di].meals.some(m => !m.done) ? `<div class="card"><h2>По плану</h2>${mn.days[di].meals.map((m, i) => m.done ? '' : `<div class="exrow" data-act="nrecipe" data-id="${m.rid}" data-m="${m.m}"><div class="grow"><div class="hint">${SLOT_RU[m.slot]}</div><b>${esc(RECID[m.rid].name)}</b><div class="hint">${nfmt(RECID[m.rid].mac.k * m.m)} ккал · Б ${r0(RECID[m.rid].mac.p * m.m)}</div></div><button data-act="neat" data-d="${di}" data-i="${i}">Съел ✓</button></div>`).join('')}</div>` : ''}
     <div class="card"><h2>Съедено</h2>
       ${list.length ? list.map(e => `<div class="exrow" style="cursor:default"><div class="grow"><b>${esc(e.name)}</b><div class="hint">${nfmt(e.k * e.m)} ккал · Б ${r0(e.p * e.m)} · Ж ${r0(e.f * e.m)} · У ${r0(e.c * e.m)}</div></div>
-        <button class="sec" style="padding:6px 10px" data-act="nmult" data-id="${e.id}" data-v="-.25">−</button><b>${String(e.m).replace('.', ',')}</b><button class="sec" style="padding:6px 10px" data-act="nmult" data-id="${e.id}" data-v=".25">+</button><button class="ghost" data-act="nedit" data-id="${e.id}" aria-label="Изменить">✎</button><button class="danger" data-act="ndel" data-id="${e.id}">✕</button></div>`).join('') : '<div class="hint">Пока пусто. Добавьте блюдо из рецептов, перекусов или своё.</div>'}
+        <button class="ghost" style="font-size:20px" data-act="nfav" data-id="${e.id}" aria-label="${db.nutr.fav.some(x => x.key === foodKey(e)) ? 'Убрать из избранного' : 'В избранное'}">${db.nutr.fav.some(x => x.key === foodKey(e)) ? '★' : '☆'}</button><button class="sec" style="padding:6px 10px" data-act="nmult" data-id="${e.id}" data-v="-.25">−</button><b>${String(e.m).replace('.', ',')}</b><button class="sec" style="padding:6px 10px" data-act="nmult" data-id="${e.id}" data-v=".25">+</button><button class="ghost" data-act="nedit" data-id="${e.id}" aria-label="Изменить">✎</button><button class="danger" data-act="ndel" data-id="${e.id}">✕</button></div>`).join('') : '<div class="hint">Пока пусто. Добавьте блюдо из рецептов, перекусов или своё.</div>'}
       <div class="sp"></div><button class="full" data-act="nadd">+ Добавить еду</button></div>`;
 }
 const prefsCard = () => { const p = db.nutr.prefs, T = nT(); return `<div class="card"><h2>Мои предпочтения</h2>
@@ -2075,9 +2078,18 @@ function recipeSheet(s) {
     ${r.tip ? `<div class="hint" style="margin-top:8px">💡 ${esc(r.tip)}</div>` : ''}
     <div class="sp"></div><button class="full" data-act="nrecadd">Добавить в дневник</button>`];
 }
+const foodKey = e => [String(e.name || '').trim().toLowerCase(), +e.k || 0, +e.p || 0, +e.f || 0, +e.c || 0, +e.m || 1].join('|');
+const foodClone = e => ({ name: e.name, k: +e.k || 0, p: +e.p || 0, f: +e.f || 0, c: +e.c || 0, m: +e.m || 1, src: e.src || '' });
+function foodQuickRow(e, act, label, extra) {
+  return `<div class="exrow" style="cursor:default"><div class="grow"><b>${esc(e.name)}</b><div class="hint">${nfmt(e.k * e.m)} ккал · Б ${r0(e.p * e.m)}</div></div>${extra || ''}<button class="sec" style="padding:7px 10px" data-act="${act}" data-id="${esc(e.id)}">${label}</button></div>`;
+}
+function recentFoods() {
+  const seen = new Set(); return db.nutr.diary.filter(e => !e.del).slice().sort((a, b) => b.ts - a.ts).filter(e => { const k = foodKey(e); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6);
+}
 function foodSheet(s) {
-  const q = (s.q || '').trim().toLowerCase(), rl = RECIPES.filter(r => !q || r.name.toLowerCase().includes(q)).slice(0, 25), sl = SNACKS.filter(x => !x.id.startsWith('avoid_') && (!q || x.n.toLowerCase().includes(q))).slice(0, 20);
-  return ['Добавить еду', `<button class="full sec" data-act="ncustom">✏️ Своё блюдо или продукт</button><div class="sp"></div>
+  const q = (s.q || '').trim().toLowerCase(), recent = recentFoods(), fav = db.nutr.fav || [], yd = dEntries(daysAgo(1));
+  const quick = !q ? `${fav.length ? `<div class="sechd">Избранное</div>${fav.slice(0, 6).map(e => foodQuickRow(e, 'nfavadd', '+ Добавить', `<button class="ghost" data-act="nfavdel" data-id="${esc(e.id)}">★</button>`)).join('')}` : ''}${recent.length ? `<div class="sechd">Недавнее</div>${recent.map(e => foodQuickRow(e, 'nrecent', '+ Добавить')).join('')}` : ''}${yd.length ? `<button class="full sec" style="margin-top:10px" data-act="nyesterday">↺ Повторить вчера: ${yd.length} поз.</button>` : ''}` : '';
+  return ['Добавить еду', `<button class="full sec" data-act="ncustom">✏️ Своё блюдо или продукт</button>${quick}<div class="sp"></div>
     <input data-f="fdq" placeholder="Поиск по рецептам и перекусам" value="${esc(s.q || '')}"><div id="fdlist">${foodList(q)}</div>`];
 }
 function foodList(q) {
@@ -2650,6 +2662,11 @@ const A = {
   nport(el) { ui.sheet.m = +el.dataset.v; renderSheet(); },
   nrecadd() { const s = ui.sheet, r = RECID[s.id]; addFood(ui.nd || todayStr(), r.name, r.mac, s.m || 1, 'recipe'); save(); ui.sheet = null; ui.view = 'nutr'; ui.ntab = 'diary'; render(); haptic(); },
   nadd() { ui.sheet = { t: 'food', q: '' }; renderSheet(); },
+  nfav(el) { const e = db.nutr.diary.find(x => x.id === el.dataset.id); if (!e) return; const key = foodKey(e), fav = db.nutr.fav, i = fav.findIndex(x => x.key === key); if (i >= 0) fav.splice(i, 1); else fav.unshift(Object.assign({ id: uid(), key }, foodClone(e))); save(); haptic(); render(); },
+  nfavadd(el) { const e = db.nutr.fav.find(x => x.id === el.dataset.id); if (e) addFoodQuick(e); },
+  nfavdel(el) { db.nutr.fav = db.nutr.fav.filter(x => x.id !== el.dataset.id); save(); renderSheet(); haptic(); },
+  nrecent(el) { const e = db.nutr.diary.find(x => x.id === el.dataset.id); if (e) addFoodQuick(e); },
+  nyesterday() { dEntries(daysAgo(1)).forEach(e => { const x = foodClone(e); addFood(todayStr(), x.name, x, x.m, 'copy'); }); save(); ui.sheet = null; ui.view = 'nutr'; ui.ntab = 'diary'; render(); haptic('medium'); snack('Дневник за вчера добавлен'); },
   ncustom() { ui.cf = { name: '', k: '', p: '', f: '', c: '' }; ui.sheet = { t: 'cf' }; renderSheet(); },
   ncfsave() { const c = ui.cf, k = num(c.k); if (!c.name.trim() || !(k > 0)) { haptic('heavy'); return; } if (c.id) { const e = db.nutr.diary.find(x => x.id === c.id); if (e) { e.name = c.name.trim(); e.k = k; e.p = num(c.p); e.f = num(c.f); e.c = num(c.c); e.ts = Date.now(); } save(); ui.sheet = null; render(); snack('Запись обновлена'); return; } addFood(ui.nd || todayStr(), c.name.trim(), { k, p: num(c.p), f: num(c.f), c: num(c.c) }, 1, 'own'); save(); ui.sheet = null; ui.view = 'nutr'; ui.ntab = 'diary'; render(); haptic(); },
   nsnack(el) { const x = SNACKS.find(y => y.id === el.dataset.id); if (!x) return; addFood(ui.nd || todayStr(), x.n, { k: x.k, p: x.p, f: x.f, c: x.c }, 1, 'snack'); save(); haptic(); if (ui.sheet) { ui.sheet = null; ui.view = 'nutr'; ui.ntab = 'diary'; } render(); },
