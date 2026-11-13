@@ -76,6 +76,7 @@ input::placeholder,textarea::placeholder{color:var(--hint);opacity:.7}
 .stat.click{cursor:pointer}
 .stat.sel{border-color:var(--periwinkle);box-shadow:3px 3px 0 var(--periwinkle)}
 .today-summary .stat{padding:8px;box-shadow:none;border-width:1.5px}.today-summary .stat b{font-family:inherit;font-size:16px;white-space:nowrap}
+.week-grid{display:grid;grid-template-columns:58px repeat(7,1fr);gap:4px;align-items:center;text-align:center}.week-grid .wk-label{text-align:left;font-size:12px;color:var(--hint)}.week-grid .wk-day{font-size:11px;color:var(--hint);font-weight:700}.week-grid .wk-cell{height:25px;border:1.5px solid var(--line);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--hint)}.week-grid .wk-cell.done{background:var(--on);color:var(--on-text);border-color:var(--on)}.week-grid .wk-cell.miss{opacity:.45}.week-grid .wk-cell.future{border-style:dashed;opacity:.5}
 canvas{width:100%;height:210px;display:block}
 .empty{text-align:center;color:var(--hint);padding:22px 10px}
 .empty img.mas{display:block;width:104px;height:auto;margin:0 auto 10px}
@@ -2238,9 +2239,38 @@ function exSeries(name) {
 }
 function weekStart(d) { const x = new Date(d); const k = (x.getDay() + 6) % 7; x.setDate(x.getDate() - k); x.setHours(0,0,0,0); return x; }
 
+function weeklyFocusCard() {
+  const base = weekStart(new Date()), today = todayStr(), dates = Array.from({ length: 7 }, (_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return ymd(d); });
+  const elapsed = Math.max(1, dates.indexOf(today) + 1), goalWater = Math.max(500, db.settings.waterGoal || 2500);
+  const supps = db.settings.supps.filter(s => s.on && s.name.trim());
+  const rows = dates.map(date => {
+    const future = date > today, train = db.workouts.some(w => w.date === date), food = dEntries(date).length > 0, water = dayWater(date) >= goalWater;
+    const due = supps.filter(s => suppDue(s, date)), supp = due.length ? due.every(s => suppTaken(date, s.id)) : null;
+    return { date, future, train, food, water, supp };
+  });
+  const done = k => rows.filter(x => x[k] === true).length;
+  const planned = planWeek().filter(x => x.p).length || db.settings.workout.days.length || 3;
+  const aims = [
+    { n: done('train'), t: Math.max(1, Math.ceil(planned * elapsed / 7)), text: 'Выберите день и проведите одну тренировку — это главный шаг недели.' },
+    { n: done('food'), t: elapsed, text: 'Заполняйте питание хотя бы в общих чертах — так рекомендации станут точнее.' },
+    { n: done('water'), t: elapsed, text: 'Сегодня закройте цель по воде — это самый простой следующий шаг.' }
+  ];
+  if (supps.length) aims.push({ n: done('supp'), t: rows.filter(x => x.supp !== null && !x.future).length || 1, text: 'Отметьте добавки по расписанию, чтобы не терять ритм.' });
+  const focus = aims.slice().sort((a, b) => a.n / a.t - b.n / b.t)[0];
+  const msg = focus.n >= focus.t ? 'Ритм недели хороший. Продолжайте в том же темпе.' : focus.text;
+  const cell = (v, future) => `<span class="wk-cell ${v ? 'done' : future ? 'future' : 'miss'}">${v ? '✓' : future ? '·' : '–'}</span>`;
+  return `<div class="card"><h2>Фокус недели</h2><div>${esc(msg)}</div><div class="hint" style="margin-top:5px">${focus.n}/${focus.t} — текущий ориентир</div>
+    <div class="sechd" style="margin-top:12px">Соблюдение</div><div class="week-grid"><span></span>${dates.map((d, i) => `<span class="wk-day">${WDN[i + 1]}</span>`).join('')}
+      <span class="wk-label">Тренировки</span>${rows.map(x => cell(x.train, x.future)).join('')}
+      <span class="wk-label">Питание</span>${rows.map(x => cell(x.food, x.future)).join('')}
+      <span class="wk-label">Вода</span>${rows.map(x => cell(x.water, x.future)).join('')}
+      ${supps.length ? `<span class="wk-label">Бады</span>${rows.map(x => x.supp === null ? '<span class="wk-cell future">·</span>' : cell(x.supp, x.future)).join('')}` : ''}
+    </div><div class="hint" style="margin-top:8px">✓ — выполнено; вода отмечается при достижении дневной цели.</div></div>`;
+}
+
 function viewProgress() {
   const tabs = `<div class="pills"><button class="${ui.ptab === 'strength' ? 'on' : ''}" data-act="ptab" data-v="strength">Силовые</button><button class="${ui.ptab === 'body' ? 'on' : ''}" data-act="ptab" data-v="body">Тело</button><button class="${ui.ptab === 'health' ? 'on' : ''}" data-act="ptab" data-v="health">Здоровье</button></div>`;
-  return '<h1>Прогресс</h1>' + tabs + '<button class="full sec" style="margin-bottom:10px" data-act="shp">↗ Поделиться прогрессом</button>' + (ui.ptab === 'body' ? viewBody() : ui.ptab === 'health' ? viewHealth() : viewStrength());
+  return '<h1>Прогресс</h1>' + tabs + '<button class="full sec" style="margin-bottom:10px" data-act="shp">↗ Поделиться прогрессом</button>' + weeklyFocusCard() + (ui.ptab === 'body' ? viewBody() : ui.ptab === 'health' ? viewHealth() : viewStrength());
 }
 
 function viewStrength() {
