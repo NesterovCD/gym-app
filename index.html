@@ -764,6 +764,34 @@ function setQueue(a) {
 }
 const nextSet = a => setQueue(a).find(p => !setDone(a.entries[p.ei].sets[p.si])) || null;
 const progressOf = a => { const q = setQueue(a); return { done: q.filter(p => setDone(a.entries[p.ei].sets[p.si])).length, total: q.length }; };
+const SYNERGY = {
+  hpress: { triceps: .45, shoulders: .25 }, ipress: { triceps: .4, shoulders: .2 }, dip: { triceps: .45, shoulders: .2 }, tripress: { chest: .2, shoulders: .15 },
+  vpress: { triceps: .45, chest: .1 }, vpull: { biceps: .45 }, hrow: { biceps: .4 },
+  squat: { hams: .35, core: .25 }, legpress: { hams: .25 }, hinge: { quads: .2, core: .3, back: .2 }, glute: { quads: .15, core: .2 },
+  corestab: { hams: .1 }
+};
+function muscleShares(e) {
+  const ex = getEx(e.name); if (!ex) return {};
+  const out = { [ex.g]: 1 }, sy = SYNERGY[ex.p] || {};
+  Object.entries(sy).forEach(([g, n]) => { out[g] = (out[g] || 0) + n; }); return out;
+}
+const setEffort = s => !s || s.wu || s.skip || !(s.r > 0) ? 0 : (s.d ? .6 : 1) * (s.rpe === 1 ? .85 : s.rpe === 3 ? 1.15 : 1);
+function activeMuscleFatigue(a, ei, si) {
+  const ex = getEx(a.entries[ei].name); if (!ex) return { group: '', load: 0, from: [] };
+  const q = setQueue(a), at = q.findIndex(x => x.ei === ei && x.si === si), by = {};
+  q.slice(0, Math.max(0, at)).forEach(p => {
+    const e = a.entries[p.ei], n = setEffort(e.sets[p.si]) * (muscleShares(e)[ex.g] || 0); if (!(n > 0)) return;
+    by[e.name] = (by[e.name] || 0) + n;
+  });
+  return { group: ex.g, load: Object.values(by).reduce((s, n) => s + n, 0), from: Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 2) };
+}
+function fatigueText(a, ei, si) {
+  const x = activeMuscleFatigue(a, ei, si), g = GROUPS[x.group] || 'Мышца';
+  if (x.load < .25) return `Утомляемость: ${g} свежая. Это хороший ориентир для сравнения рабочих весов.`;
+  const level = x.load < 1.5 ? 'лёгкая' : x.load < 3 ? 'умеренная' : 'высокая';
+  const from = x.from.length ? ` · до этого: ${x.from.map(([n, v]) => `${n} ${fmt(v)}`).join(', ')}` : '';
+  return `Утомляемость ${g.toLowerCase()}: ${level} (${fmt(x.load)} эфф. подх.)${from}. Сравнивайте вес с тренировками в похожем порядке.`;
+}
 const wKey = n => n.replace('.', ',');
 function focusEnter(p, preset) {
   const a = db.active; if (!p) { ui.focus = { step: 'end' }; return; }
@@ -789,7 +817,7 @@ function focusHtml() {
   const e = a.entries[f.ei], s = e.sets[f.si], sg = e.sug || (e.sug = suggestFor(e)), pos = ssPos(a.entries)[f.ei];
   const workIdx = e.sets.slice(0, f.si + 1).filter(x => !x.d && !x.wu).length, workTot = e.sets.filter(x => !x.d && !x.wu).length, wuIdx = e.sets.slice(0, f.si + 1).filter(x => x.wu).length, wuTot = e.sets.filter(x => x.wu).length;
   const tags = `${pos ? `<span class="badge">Суперсет ${pos.pos}/${pos.len}</span>` : ''}${s.d ? '<span class="badge">Дропсет ↓</span>' : ''}${s.wu ? '<span class="badge">Разминка</span>' : ''}${e.blk ? '<span class="badge">Старт</span>' : ''}`;
-  const prev = lastSets(e.name, null), head = `<div>${tags}</div><div class="fk" style="font-size:34px;margin:6px 0 2px">${esc(e.name)}</div>
+  const prev = lastSets(e.name, null), fatigue = !s.wu ? fatigueText(a, f.ei, f.si) : '', head = `<div>${tags}</div><div class="fk" style="font-size:34px;margin:6px 0 2px">${esc(e.name)}</div>
     <div class="hint">${s.d ? 'Дропсет сразу после подхода, без отдыха' : s.wu ? `Разминочный подход ${wuIdx} из ${wuTot}, лёгкий вес` : `Подход ${workIdx} из ${workTot}`}${e.target ? ` · план ${esc(e.target)}` : ''}</div>`;
   if (f.step === 'rest') {
     const nx = nextSet(a), ne = nx && a.entries[nx.ei], left = Math.max(0, Math.ceil((f.rest - Date.now()) / 1000));
@@ -809,7 +837,7 @@ function focusHtml() {
       <div class="row"><button class="sec grow" data-act="frest30">+30 сек</button><button class="sec grow" data-act="frsound">${f.sound === false ? '🔕 Без звука' : '🔔 Звук'}</button><button class="sec grow" data-act="faddset">+ подход</button></div>
       <div class="sp"></div><button class="full fgo" data-act="frskip">Дальше →</button>`;
   }
-  const hint = s.wu ? `Лёгкий вес, чтобы разогреть суставы и вспомнить движение. Цель: ${s.tr || 5} повторений без усилия.` : `${prev ? `Прошлый раз: ${esc(setsText(prev))}` : ''}${sg.note ? `<div style="margin-top:4px">💡 ${esc(sg.note)}</div>` : ''}`;
+  const prevCtx = lastExerciseContext(e.name), hint = s.wu ? `Лёгкий вес, чтобы разогреть суставы и вспомнить движение. Цель: ${s.tr || 5} повторений без усилия.` : `${prev ? `Прошлый раз: ${esc(setsText(prev))}` : ''}${prevCtx != null ? `<div style="margin-top:4px">В прошлой записи перед упражнением: ${fmt(prevCtx)} эфф. подх.</div>` : ''}${sg.note ? `<div style="margin-top:4px">💡 ${esc(sg.note)}</div>` : ''}${fatigue ? `<div style="margin-top:4px">🧠 ${esc(fatigue)}</div>` : ''}`;
   const unitW = (getEx(e.name) || {}).e === 'dumbbell' ? [-2, -1, 1, 2] : [-5, -2.5, 2.5, 5];
   if (f.step === 'w') return top + head + (hint ? `<div class="card hint" style="margin-top:10px">${hint}</div>` : '') +
     `<div style="flex:1;display:flex;flex-direction:column;justify-content:center"><div class="fk" style="text-align:center;font-size:27px">Вес, кг</div>
@@ -1261,6 +1289,11 @@ function lastSets(name, skipId) {
     const e = w.entries.find(x => x.name.trim().toLowerCase() === key);
     if (e && e.sets.length) return e.sets;
   }
+  return null;
+}
+function lastExerciseContext(name) {
+  const key = name.trim().toLowerCase();
+  for (const w of sortedWorkouts()) { const e = w.entries.find(x => x.name.trim().toLowerCase() === key); if (e && e.ctx != null) return +e.ctx; }
   return null;
 }
 const setsText = sets => sets.map(s => (s.d ? '↓' : '') + fmt(s.w) + '×' + s.r).join(', ');
@@ -2239,6 +2272,21 @@ function exSeries(name) {
 }
 function weekStart(d) { const x = new Date(d); const k = (x.getDay() + 6) % 7; x.setDate(x.getDate() - k); x.setHours(0,0,0,0); return x; }
 
+function weekMuscleLoads() {
+  const out = Object.fromEntries(Object.keys(GROUPS).map(g => [g, 0])), lim = daysAgo(6);
+  const add = w => w.entries.forEach(e => { const eff = (e.sets || []).reduce((s, x) => s + setEffort(x), 0); if (!(eff > 0)) return; Object.entries(muscleShares(e)).forEach(([g, n]) => { out[g] += eff * n; }); });
+  db.workouts.filter(w => w.date >= lim).forEach(add); if (db.active) add(db.active); return out;
+}
+function muscleLoadCard() {
+  const load = weekMuscleLoads(), list = Object.entries(load).filter(([, n]) => n > .05).sort((a, b) => b[1] - a[1]);
+  if (!list.length) return '';
+  const mx = Math.max(1, ...list.map(([, n]) => n));
+  return `<div class="card"><h2>Нагрузка мышц за 7 дней</h2><div class="hint" style="margin-bottom:8px">Эффективные подходы: целевая мышца — 100%, синергисты — 10–45%. Это помогает сравнивать упражнения в разном порядке.</div>${list.map(([g, n]) => {
+    const state = n < 3 ? 'низкая' : n < 7 ? 'средняя' : 'высокая';
+    return `<div style="margin:8px 0"><div class="row"><b class="grow">${esc(GROUPS[g])}</b><span class="hint">${fmt(n)} эфф. подх. · ${state}</span></div><div class="meter"><i style="width:${Math.round(n / mx * 100)}%"></i></div></div>`;
+  }).join('')}<div class="hint" style="margin-top:8px">«Высокая» — не запрет на тренировку, а контекст для веса, повторов и восстановления.</div></div>`;
+}
+
 function weeklyFocusCard() {
   const base = weekStart(new Date()), today = todayStr(), dates = Array.from({ length: 7 }, (_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return ymd(d); });
   const elapsed = Math.max(1, dates.indexOf(today) + 1), goalWater = Math.max(500, db.settings.waterGoal || 2500);
@@ -2292,7 +2340,7 @@ function viewStrength() {
       <div class="stat"><span class="hint">Объём за 30 дней</span><b>${fmt(vol30 / 1000)} т</b></div>
       <div class="stat"><span class="hint">Рекорд: ${esc(ui.pex || '—')}</span><b class="pr">${best > 0 ? fmt(best) + ' кг' : bestR + ' повт.'}</b></div>
     </div>
-    <div class="card"><h2>Тренировки по неделям</h2><canvas id="c-weeks"></canvas></div>
+    ${muscleLoadCard()}<div class="card"><h2>Тренировки по неделям</h2><canvas id="c-weeks"></canvas></div>
     <div class="card"><h2>По упражнению</h2>
       <select data-f="pex">${names.map(n => `<option ${n === ui.pex ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
       <div class="pills">
@@ -2496,6 +2544,7 @@ const A = {
   fback() { ui.focus.step = 'w'; renderFocus(); },
   frec() {
     const f = ui.focus, e = db.active.entries[f.ei], s = e.sets[f.si], r = Math.round(num(f.rval)); if (!(r > 0)) { haptic('heavy'); return; }
+    if (!s.d && !s.wu && e.ctx == null) e.ctx = Math.round(activeMuscleFatigue(db.active, f.ei, f.si).load * 10) / 10;
     s.r = r; s.skip = 0;
     if (!s.d && !s.wu) propagate(e, f.si);
     const ser = exSeries(e.name), bw = ser.length ? Math.max(...ser.map(p => p.w)) : 0, be = ser.length ? Math.max(...ser.map(p => p.e)) : 0;
@@ -2535,7 +2584,7 @@ const A = {
   delset(el) { db.active.entries[+el.dataset.ei].sets.splice(+el.dataset.si, 1); save(); render(); },
   finish() {
     const a = db.active;
-    const entries = a.entries.map(e => { const o = { name: e.name, sets: e.sets.filter(s => s.r > 0 && !s.wu).map(s => { const o = { w: s.w, r: s.r }; if (s.d) o.d = 1; if (s.rpe) o.rpe = s.rpe; return o; }) }; if (e.ss) o.ss = e.ss; return o; }).filter(e => e.sets.length);
+    const entries = a.entries.map(e => { const o = { name: e.name, sets: e.sets.filter(s => s.r > 0 && !s.wu).map(s => { const o = { w: s.w, r: s.r }; if (s.d) o.d = 1; if (s.rpe) o.rpe = s.rpe; return o; }) }; if (e.ss) o.ss = e.ss; if (e.ctx != null) o.ctx = e.ctx; return o; }).filter(e => e.sets.length);
     if (!entries.length) { alert('Заполните хотя бы один подход (повторения больше нуля).'); return; }
     db.workouts.push({ id: a.id, pid: a.pid || '', date: a.date, name: a.name || 'Тренировка', note: a.note, entries, dur: Math.max(1, Math.round((Date.now() - a.start) / 60000)), cool: ui.cool && ui.cool.ctx === 'active' ? Object.keys(ui.cool.done).length : 0 });
     db.active = null; keepScreenAwake(false); ui.focus = null; ui.cool = null; ui.view = 'history'; ui.just = true; ui.open[a.id] = true; save(); scheduleSync(); render(); window.scrollTo(0, 0);
